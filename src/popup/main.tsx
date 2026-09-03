@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { sendMessage } from "../chrome";
 import type { CaptureOutcome } from "../messages";
 import { DEFAULT_SETTINGS, type Settings } from "../domain";
+import { applyTheme } from "../theme";
 import { isImeInput } from "./ime";
 import "./popup.css";
 
@@ -28,6 +29,7 @@ function Popup() {
 
   useEffect(() => {
     if (!settings) return;
+    applyTheme(settings.theme);
     localStorage.setItem("popupScale", String(settings.popupScale ?? DEFAULT_SETTINGS.popupScale));
   }, [settings]);
 

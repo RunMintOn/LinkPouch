@@ -1,6 +1,7 @@
 export type ItemState = "unread" | "done" | "trash";
 export type QueueView = "unread" | "today" | "week" | "source" | "done" | "trash";
 export type SortOrder = "newest" | "oldest";
+export type Theme = "system" | "light" | "dark";
 
 export interface ReadingItem {
   id: string;
@@ -20,6 +21,7 @@ export interface Settings {
   alwaysOpenNewTab: boolean;
   popupScale: number;
   sortOrder: SortOrder;
+  theme: Theme;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -28,6 +30,7 @@ export const DEFAULT_SETTINGS: Settings = {
   alwaysOpenNewTab: false,
   popupScale: 0.9,
   sortOrder: "newest",
+  theme: "system",
 };
 
 export function normalizeUrl(value: string): string {

@@ -40,6 +40,9 @@ export async function getSettings(): Promise<Settings> {
     popupScale: typeof saved.popupScale === "number"
       ? Math.min(1, Math.max(0.8, saved.popupScale))
       : DEFAULT_SETTINGS.popupScale,
+    theme: saved.theme === "light" || saved.theme === "dark" || saved.theme === "system"
+      ? saved.theme
+      : DEFAULT_SETTINGS.theme,
   };
 }
 

@@ -15,6 +15,7 @@ import {
 } from "../domain";
 import { sendMessage } from "../chrome";
 import { getItems, getSettings, removeItem, setItems as persistItems, setSettings as persistSettings } from "../repository";
+import { applyTheme } from "../theme";
 import "./queue.css";
 
 const VIEWS: Array<{ id: QueueView; label: string }> = [
@@ -127,6 +128,10 @@ function SettingsPanel({ settings, onSave }: { settings: Settings; onSave: (sett
     <section className="settings-panel">
       <div className="section-title"><h1>设置</h1></div>
       <div className="settings-card">
+        <h2>外观</h2>
+        <label className="select-row"><div><strong>主题</strong><small>选择界面外观；跟随系统会自动切换。</small></div><select value={draft.theme} onChange={(e) => setDraft({ ...draft, theme: e.target.value as Settings["theme"] })}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+      </div>
+      <div className="settings-card">
         <h2>浏览行为</h2>
         <label className="toggle-row"><div><strong>Capture 后关闭原标签页</strong><small>只在按 Enter 确认后关闭；固定标签页不会关闭。</small></div><input type="checkbox" checked={draft.closeAfterCapture} onChange={(e) => setDraft({ ...draft, closeAfterCapture: e.target.checked })} /></label>
         <label className="toggle-row"><div><strong>始终在新标签页打开</strong><small>关闭时，若相同网址已打开则直接切换过去。</small></div><input type="checkbox" checked={draft.alwaysOpenNewTab} onChange={(e) => setDraft({ ...draft, alwaysOpenNewTab: e.target.checked })} /></label>
@@ -171,6 +176,8 @@ function App() {
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
   }, []);
+
+  useEffect(() => applyTheme(settings.theme), [settings.theme]);
 
   useEffect(() => {
     function focusSearch(event: KeyboardEvent) {

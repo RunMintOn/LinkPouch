@@ -114,6 +114,15 @@ describe("background browser workflow", () => {
     expect(harness.openPopup).toHaveBeenCalledOnce();
   });
 
+  it("falls back to the system theme for invalid stored settings", async () => {
+    const harness = await createHarness();
+    harness.local.settings = { theme: "midnight" };
+
+    const response = await harness.message({ type: "CAPTURE_ACTIVE_TAB" });
+
+    expect(response.ok && response.settings?.theme).toBe("system");
+  });
+
   it("focuses an existing tab with the same URL instead of creating one", async () => {
     const harness = await createHarness();
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   captureItem,
+  DEFAULT_SETTINGS,
   domainFromUrl,
   itemsForView,
   markDone,
@@ -14,6 +15,10 @@ import {
 const page = { url: "https://www.Example.com/article?x=1#part", title: "Article" };
 
 describe("reading queue domain", () => {
+  it("defaults to following the system theme", () => {
+    expect(DEFAULT_SETTINGS.theme).toBe("system");
+  });
+
   it("normalizes domains without changing meaningful URL parts", () => {
     expect(domainFromUrl(page.url)).toBe("example.com");
     expect(captureItem([], page, 10, "one").item.url).toBe("https://www.example.com/article?x=1#part");
