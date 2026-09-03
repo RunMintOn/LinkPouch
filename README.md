@@ -6,6 +6,18 @@
 
 A local-first Chromium extension for quickly capturing pages, returning to them in the browser, and clearing the reading backlog.
 
+![mainpage](image.png)
+
+## Install
+
+1. Download the [latest release](https://github.com/RunMintOn/LinkPouch/releases/latest) ZIP.
+2. Extract it to a permanent folder.
+3. Open `chrome://extensions` and enable **Developer mode**.
+4. Select **Load unpacked** and choose the extracted `LinkPouch` folder.
+5. Open `chrome://extensions/shortcuts` if Chrome did not assign the suggested shortcuts.
+
+To update, download and extract the next release, then select **Reload** for LinkPouch on `chrome://extensions`.
+
 ## Development
 
 Requirements: Node.js 22+ and Chrome 127+.
