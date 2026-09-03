@@ -1,0 +1,46 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+  color: #252931;
+  background: #faf9f7;
+  font-synthesis: none;
+  --warm: #c9783d;
+  --warm-soft: #fff0e5;
+  --border: rgba(43, 39, 35, .17);
+  --ease-out: cubic-bezier(.25, .46, .45, .94);
+}
+* { box-sizing: border-box; }
+body { margin: 0; width: 560px; background: #faf9f7; zoom: var(--popup-scale, .9); }
+button, textarea { font: inherit; }
+.popup { min-height: 420px; padding: 22px 22px 0; overflow: hidden; background: #faf9f7; }
+header { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 12px; align-items: center; margin: 0 2px 17px; }
+.app-icon { display: block; width: 38px; height: 38px; border-radius: 9px; object-fit: cover; filter: drop-shadow(0 2px 5px #00000016); }
+.capture-mark { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: white; background: #007aff; font-size: 12px; font-weight: 700; box-shadow: 0 2px 8px #007aff30; }
+.capture-mark.error { background: #ff3b30; box-shadow: 0 3px 10px #ff3b3030; }
+.capture-copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.capture-copy strong { overflow: hidden; color: #242a33; font-size: 15px; font-weight: 650; line-height: 1.35; letter-spacing: -.014em; text-overflow: ellipsis; white-space: nowrap; }
+.capture-copy small { overflow: hidden; color: #89898e; font-size: 13px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+textarea { display: block; width: 100%; height: 126px; padding: 15px 16px; resize: none; border: .5px solid #bdb9b5; border-radius: 11px; outline: none; color: #252931; background: #ffffff70; font-size: 15px; line-height: 1.45; box-shadow: inset 0 0 0 .5px #ffffffa0; transition: border-color 150ms, box-shadow 150ms, background 150ms; }
+textarea:focus { border-color: #a8a19b; background: #ffffff9c; box-shadow: 0 0 0 3px #d98b4b12, inset 0 0 0 .5px #ffffffa0; }
+textarea::placeholder { color: #99979a; }
+.preset-list { margin-top: 16px; }
+.preset-title { display: flex; justify-content: space-between; align-items: center; margin: 0 2px 11px; }
+.preset-title span { display: flex; gap: 6px; align-items: center; color: #31363e; font-size: 13px; font-weight: 650; }
+.preset-title span i { color: #f0a063; font-size: 16px; font-style: normal; font-weight: 500; }
+.preset-title small { color: #969499; font-size: 12px; }
+.preset-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.preset-buttons button { display: flex; min-width: 0; height: 46px; gap: 10px; align-items: center; padding: 7px 10px; border: .5px solid var(--border); border-radius: 10px; color: #303641; background: #ffffff68; cursor: pointer; text-align: left; box-shadow: 0 1px 2px #00000008; transition: border-color 150ms, background 150ms, transform 150ms var(--ease-out), box-shadow 150ms; }
+.preset-buttons button:hover { border-color: #d6aa88; background: #fffcf9; box-shadow: 0 2px 7px #7a4b2910; }
+.preset-buttons button:active { background: #f7eee8; transform: scale(.992); }
+.preset-buttons button kbd { display: grid; flex: 0 0 auto; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; color: var(--warm); background: var(--warm-soft); box-shadow: none; font-size: 13px; font-weight: 650; }
+.preset-buttons button span { overflow: hidden; font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+footer { display: flex; justify-content: space-between; align-items: center; min-height: 54px; margin: 18px -22px 0; padding: 0 22px; border-top: .5px solid #0000000f; color: #6d6c71; font-size: 12px; }
+kbd { display: inline-flex; align-items: center; justify-content: center; min-height: 25px; padding: 2px 8px; border: .5px solid #c9c6c3; border-radius: 6px; color: #66656a; background: #ffffff80; box-shadow: 0 1px 0 #d7d3d0; font-family: inherit; font-size: 12px; }
+.chord.active { color: var(--warm); font-weight: 600; }
+.error-state { min-height: 250px; padding-top: 38px; text-align: center; }
+.error-state .capture-mark { margin: auto; }
+.error-state h1 { margin: 12px 0 5px; font-size: 17px; }
+.error-state p { max-width: 420px; margin: 0 auto 18px; color: #6e6e73; font-size: 13px; line-height: 1.5; }
+.error-state button { padding: 8px 19px; border: 0; border-radius: 7px; color: white; background: #007aff; cursor: pointer; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: .01ms !important; }
+}

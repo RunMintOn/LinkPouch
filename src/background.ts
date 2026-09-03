@@ -1,0 +1,125 @@
+import { captureItem } from "./domain";
+import type { RuntimeMessage, RuntimeResponse, CaptureSession } from "./messages";
+import {
+  getCaptureSession,
+  getItems,
+  getSettings,
+  setCaptureSession,
+  setItems,
+  updateItem,
+} from "./repository";
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isCapturable(url?: string): url is string {
+  return Boolean(url && (url.startsWith("http://") || url.startsWith("https://")));
+}
+
+async function captureActiveTab(): Promise<CaptureSession> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const startedAt = Date.now();
+  if (!tab?.id || !isCapturable(tab.url)) {
+    const session = { startedAt, error: "这个页面不能加入阅读队列。请在普通网页上重试。" };
+    await setCaptureSession(session);
+    return session;
+  }
+
+  const result = captureItem(await getItems(), { url: tab.url, title: tab.title ?? tab.url }, startedAt);
+  await setItems(result.items);
+  const session: CaptureSession = {
+    itemId: result.item.id,
+    sourceTabId: tab.id,
+    outcome: result.outcome,
+    startedAt,
+  };
+  await setCaptureSession(session);
+  return session;
+}
+
+async function openCapturePopup(session: CaptureSession): Promise<void> {
+  const tab = session.sourceTabId ? await chrome.tabs.get(session.sourceTabId).catch(() => undefined) : undefined;
+  try {
+    await chrome.action.openPopup(tab?.windowId ? { windowId: tab.windowId } : undefined);
+  } catch {
+    await chrome.action.setBadgeBackgroundColor({ color: "#2563eb" });
+    await chrome.action.setBadgeText({ text: session.error ? "!" : "✓", tabId: session.sourceTabId });
+    setTimeout(() => chrome.action.setBadgeText({ text: "", tabId: session.sourceTabId }).catch(() => undefined), 1800);
+  }
+}
+
+async function openQueue(): Promise<void> {
+  const queueUrl = chrome.runtime.getURL("queue.html");
+  const [existing] = await chrome.tabs.query({ url: `${queueUrl}*` });
+  if (existing?.id) {
+    await chrome.tabs.update(existing.id, { active: true });
+    if (existing.windowId) await chrome.windows.update(existing.windowId, { focused: true });
+    return;
+  }
+  await chrome.tabs.create({ url: queueUrl, active: true });
+}
+
+async function focusTab(tab: chrome.tabs.Tab): Promise<void> {
+  if (tab.id === undefined) return;
+  await chrome.tabs.update(tab.id, { active: true });
+  await chrome.windows.update(tab.windowId, { focused: true });
+}
+
+async function openItem(url: string, queueWindowId?: number): Promise<void> {
+  const settings = await getSettings();
+  if (!settings.alwaysOpenNewTab && queueWindowId !== undefined) {
+    const existing = (await chrome.tabs.query({ windowId: queueWindowId }))
+      .find((tab) => tab.url === url);
+    if (existing) {
+      await focusTab(existing);
+      return;
+    }
+  }
+
+  await chrome.tabs.create({ url, active: true, windowId: queueWindowId });
+}
+
+async function handleMessage(message: RuntimeMessage, sender?: chrome.runtime.MessageSender): Promise<RuntimeResponse> {
+  try {
+    if (message.type === "CAPTURE_ACTIVE_TAB") {
+      const pending = await getCaptureSession();
+      const session = pending && Date.now() - pending.startedAt < 10_000 ? pending : await captureActiveTab();
+      if (session.error) return { ok: false, error: session.error };
+      const item = (await getItems()).find(({ id }) => id === session.itemId);
+      return { ok: true, session, item, settings: await getSettings() };
+    }
+    if (message.type === "CONFIRM_CAPTURE") {
+      const item = await updateItem(message.itemId, (current) => ({ ...current, note: message.note }));
+      if (!item) return { ok: false, error: "找不到刚刚捕获的条目。" };
+      const settings = await getSettings();
+      await chrome.storage.session.remove("captureSession");
+      if (settings.closeAfterCapture && message.sourceTabId !== undefined) {
+        const tab = await chrome.tabs.get(message.sourceTabId).catch(() => undefined);
+        if (tab && !tab.pinned) await chrome.tabs.remove(message.sourceTabId).catch(() => undefined);
+      }
+      return { ok: true, item, settings };
+    }
+    if (message.type === "OPEN_ITEM") {
+      await openItem(message.url, sender?.tab?.windowId);
+      return { ok: true };
+    }
+    if (message.type === "OPEN_QUEUE") {
+      await openQueue();
+      return { ok: true };
+    }
+    return { ok: false, error: "未知操作。" };
+  } catch (error) {
+    return { ok: false, error: errorMessage(error) };
+  }
+}
+
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command === "capture-current-page") await openCapturePopup(await captureActiveTab());
+  if (command === "open-reading-queue") await openQueue();
+});
+
+chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendResponse) => {
+  void handleMessage(message, sender).then(sendResponse);
+  return true;
+});
