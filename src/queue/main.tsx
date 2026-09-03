@@ -13,19 +13,13 @@ import {
   type ReadingItem,
   type Settings,
 } from "../domain";
+import { t, viewLabel } from "../i18n";
 import { sendMessage } from "../chrome";
 import { getItems, getSettings, removeItem, setItems as persistItems, setSettings as persistSettings } from "../repository";
 import { applyTheme } from "../theme";
 import "./queue.css";
 
-const VIEWS: Array<{ id: QueueView; label: string }> = [
-  { id: "unread", label: "全部未读" },
-  { id: "today", label: "今天" },
-  { id: "week", label: "本周" },
-  { id: "source", label: "按来源" },
-  { id: "done", label: "已完成" },
-  { id: "trash", label: "废纸篓" },
-];
+const VIEWS: QueueView[] = ["unread", "today", "week", "source", "done", "trash"];
 
 function NavIcon({ view }: { view: QueueView | "settings" }) {
   const paths: Record<QueueView | "settings", React.ReactNode> = {
@@ -40,14 +34,14 @@ function NavIcon({ view }: { view: QueueView | "settings" }) {
   return <svg className="nav-icon" viewBox="0 0 20 20" aria-hidden="true">{paths[view]}</svg>;
 }
 
-function relativeDate(timestamp: number): string {
+function relativeDate(timestamp: number, language: Settings["language"]): string {
   const date = new Date(timestamp);
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const day = 86_400_000;
-  if (date.getTime() >= today) return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  if (date.getTime() >= today - day) return "昨天";
-  return date.toLocaleDateString([], { month: "short", day: "numeric" });
+  if (date.getTime() >= today) return date.toLocaleTimeString(language, { hour: "2-digit", minute: "2-digit" });
+  if (date.getTime() >= today - day) return t(language, "queue.yesterday");
+  return date.toLocaleDateString(language, { month: "short", day: "numeric" });
 }
 
 function SiteIcon({ item }: { item: ReadingItem }) {
@@ -60,7 +54,7 @@ function SiteIcon({ item }: { item: ReadingItem }) {
   return <img className="site-favicon" src={favicon.href} alt="" onError={() => setFailed(true)} />;
 }
 
-function QueueItem({ item, onChange }: { item: ReadingItem; onChange: (next: ReadingItem | null) => void }) {
+function QueueItem({ item, language, onChange }: { item: ReadingItem; language: Settings["language"]; onChange: (next: ReadingItem | null) => void }) {
   const state = stateOf(item);
 
   async function update(transform: (value: ReadingItem) => ReadingItem) {
@@ -80,8 +74,8 @@ function QueueItem({ item, onChange }: { item: ReadingItem; onChange: (next: Rea
     }}>
       <button
         className={state === "done" ? "check checked" : "check"}
-        title={state === "done" ? "恢复未读" : "标记完成"}
-        aria-label={state === "done" ? "恢复未读" : "标记完成"}
+        title={state === "done" ? t(language, "queue.markUnread") : t(language, "queue.markDone")}
+        aria-label={state === "done" ? t(language, "queue.markUnread") : t(language, "queue.markDone")}
         onClick={(event) => {
           event.stopPropagation();
           void update(state === "done" ? markUnread : markDone);
@@ -94,19 +88,19 @@ function QueueItem({ item, onChange }: { item: ReadingItem; onChange: (next: Rea
         <div className="item-detail-row">
           <div className="item-heading">
             <h2>{item.title}</h2>
-            {state !== "unread" && <span className={`state ${state}`}>{state === "done" ? "已完成" : "废纸篓"}</span>}
+            {state !== "unread" && <span className={`state ${state}`}>{state === "done" ? t(language, "state.done") : t(language, "state.trash")}</span>}
           </div>
-          <div className="meta"><span>{item.domain}</span><span>·</span><time>{relativeDate(item.queuedAt)}</time></div>
+          <div className="meta"><span>{item.domain}</span><span>·</span><time>{relativeDate(item.queuedAt, language)}</time></div>
         </div>
       </div>
       <div className="item-actions">
         {state === "trash" ? <>
-          <button onClick={(event) => { event.stopPropagation(); void update(restoreFromTrash); }}>恢复</button>
+          <button onClick={(event) => { event.stopPropagation(); void update(restoreFromTrash); }}>{t(language, "queue.restore")}</button>
           <button className="danger" onClick={(event) => {
             event.stopPropagation();
-            if (window.confirm("永久删除这个条目？此操作无法撤销。")) void removeItem(item.id).then(() => onChange(null));
-          }}>永久删除</button>
-        </> : <button onClick={(event) => { event.stopPropagation(); void update(moveToTrash); }}>删除</button>}
+            if (window.confirm(t(language, "queue.deleteForeverConfirm"))) void removeItem(item.id).then(() => onChange(null));
+          }}>{t(language, "queue.deleteForever")}</button>
+        </> : <button onClick={(event) => { event.stopPropagation(); void update(moveToTrash); }}>{t(language, "queue.delete")}</button>}
       </div>
     </article>
   );
@@ -115,6 +109,7 @@ function QueueItem({ item, onChange }: { item: ReadingItem; onChange: (next: Rea
 function SettingsPanel({ settings, onSave }: { settings: Settings; onSave: (settings: Settings) => Promise<void> }) {
   const [draft, setDraft] = useState(settings);
   const [saved, setSaved] = useState(false);
+  const language = draft.language;
 
   useEffect(() => setDraft(settings), [settings]);
 
@@ -126,31 +121,32 @@ function SettingsPanel({ settings, onSave }: { settings: Settings; onSave: (sett
 
   return (
     <section className="settings-panel">
-      <div className="section-title"><h1>设置</h1></div>
+      <div className="section-title"><h1>{t(language, "settings.title")}</h1></div>
       <div className="settings-card">
-        <h2>外观</h2>
-        <label className="select-row"><div><strong>主题</strong><small>选择界面外观；跟随系统会自动切换。</small></div><select value={draft.theme} onChange={(e) => setDraft({ ...draft, theme: e.target.value as Settings["theme"] })}><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+        <h2>{t(language, "settings.appearance")}</h2>
+        <label className="select-row"><div><strong>{t(language, "settings.theme")}</strong><small>{t(language, "settings.themeHelp")}</small></div><select value={draft.theme} onChange={(e) => setDraft({ ...draft, theme: e.target.value as Settings["theme"] })}><option value="system">{t(language, "settings.themeSystem")}</option><option value="light">{t(language, "settings.themeLight")}</option><option value="dark">{t(language, "settings.themeDark")}</option></select></label>
+        <label className="select-row"><div><strong>{t(language, "settings.language")}</strong><small>{t(language, "settings.languageHelp")}</small></div><select value={language} onChange={(e) => setDraft({ ...draft, language: e.target.value as Settings["language"] })}><option value="zh-CN">{t(language, "settings.languageChinese")}</option><option value="en">{t(language, "settings.languageEnglish")}</option></select></label>
       </div>
       <div className="settings-card">
-        <h2>浏览行为</h2>
-        <label className="toggle-row"><div><strong>Capture 后关闭原标签页</strong><small>只在按 Enter 确认后关闭；固定标签页不会关闭。</small></div><input type="checkbox" checked={draft.closeAfterCapture} onChange={(e) => setDraft({ ...draft, closeAfterCapture: e.target.checked })} /></label>
-        <label className="toggle-row"><div><strong>始终在新标签页打开</strong><small>关闭时，若相同网址已打开则直接切换过去。</small></div><input type="checkbox" checked={draft.alwaysOpenNewTab} onChange={(e) => setDraft({ ...draft, alwaysOpenNewTab: e.target.checked })} /></label>
+        <h2>{t(language, "settings.browsing")}</h2>
+        <label className="toggle-row"><div><strong>{t(language, "settings.closeAfterCapture")}</strong><small>{t(language, "settings.closeAfterCaptureHelp")}</small></div><input type="checkbox" checked={draft.closeAfterCapture} onChange={(e) => setDraft({ ...draft, closeAfterCapture: e.target.checked })} /></label>
+        <label className="toggle-row"><div><strong>{t(language, "settings.alwaysNewTab")}</strong><small>{t(language, "settings.alwaysNewTabHelp")}</small></div><input type="checkbox" checked={draft.alwaysOpenNewTab} onChange={(e) => setDraft({ ...draft, alwaysOpenNewTab: e.target.checked })} /></label>
       </div>
       <div className="settings-card">
-        <h2>快速捕获</h2>
+        <h2>{t(language, "settings.quickCapture")}</h2>
         <label className="scale-row">
-          <div><strong>Popup 尺寸</strong><small>只影响 Option+Shift+S 打开的快速捕获窗口。</small></div>
+          <div><strong>{t(language, "settings.popupSize")}</strong><small>{t(language, "settings.popupSizeHelp")}</small></div>
           <div className="scale-control"><input type="range" min="80" max="100" step="5" value={Math.round(draft.popupScale * 100)} onChange={(e) => setDraft({ ...draft, popupScale: Number(e.target.value) / 100 })} /><output>{Math.round(draft.popupScale * 100)}%</output></div>
         </label>
       </div>
       <div className="settings-card">
-        <h2>快捷备注</h2>
-        <p className="settings-help">在 Quick Capture 中按 Ctrl+E，再按对应数字插入。</p>
-        <div className="preset-grid">{draft.presets.map((preset, index) => <label key={index}><span>{index + 1}</span><input value={preset} maxLength={100} placeholder="留空即停用" onChange={(e) => {
+        <h2>{t(language, "settings.presetNotes")}</h2>
+        <p className="settings-help">{t(language, "settings.presetNotesHelp")}</p>
+        <div className="preset-grid">{draft.presets.map((preset, index) => <label key={index}><span>{index + 1}</span><input value={preset} maxLength={100} placeholder={t(language, "settings.emptyPreset")} onChange={(e) => {
           const presets = [...draft.presets]; presets[index] = e.target.value; setDraft({ ...draft, presets });
         }} /></label>)}</div>
       </div>
-      <button className="primary" onClick={() => void save()}>{saved ? "已保存" : "保存设置"}</button>
+      <button className="primary" onClick={() => void save()}>{saved ? t(language, "settings.saved") : t(language, "settings.save")}</button>
     </section>
   );
 }
@@ -212,13 +208,13 @@ function App() {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     return visible.reduce((groups, item) => {
-      const label = item.queuedAt >= today.getTime() ? "今天" : "更早";
+      const label = item.queuedAt >= today.getTime() ? t(settings.language, "queue.today") : t(settings.language, "queue.earlier");
       const group = groups.get(label) ?? [];
       group.push(item);
       groups.set(label, group);
       return groups;
     }, new Map<string, ReadingItem[]>());
-  }, [visible, view, query]);
+  }, [visible, view, query, settings.language]);
 
   function applyChange(next: ReadingItem | null) {
     if (!next) return void reload();
@@ -226,34 +222,34 @@ function App() {
   }
 
   const unreadCount = items.filter((item) => stateOf(item) === "unread").length;
-  const currentLabel = query.trim() ? "搜索结果" : VIEWS.find(({ id }) => id === view)?.label;
+  const currentLabel = query.trim() ? t(settings.language, "queue.searchResults") : viewLabel(settings.language, view);
 
   return (
     <div className="shell">
       <aside>
-        <div className="brand"><img className="logo" src="/icon.png" alt="" /><div><strong>LinkPouch</strong><span>{unreadCount} 项待阅读</span></div></div>
-        <nav>{VIEWS.map(({ id, label }) => {
+        <div className="brand"><img className="logo" src="/icon.png" alt="" /><div><strong>LinkPouch</strong><span>{t(settings.language, "queue.unreadCount", { count: unreadCount })}</span></div></div>
+        <nav>{VIEWS.map((id) => {
           const count = itemsForView(items, id, settings.sortOrder).length;
-          return <button key={id} className={!showSettings && view === id ? "active" : ""} onClick={() => { setView(id); setShowSettings(false); }}><NavIcon view={id} /><span>{label}</span>{count > 0 && <em>{count}</em>}</button>;
+          return <button key={id} className={!showSettings && view === id ? "active" : ""} onClick={() => { setView(id); setShowSettings(false); }}><NavIcon view={id} /><span>{viewLabel(settings.language, id)}</span>{count > 0 && <em>{count}</em>}</button>;
         })}</nav>
-        <button className={showSettings ? "settings-link active" : "settings-link"} onClick={() => setShowSettings(true)}><NavIcon view="settings" /><span>设置</span></button>
+        <button className={showSettings ? "settings-link active" : "settings-link"} onClick={() => setShowSettings(true)}><NavIcon view="settings" /><span>{t(settings.language, "settings.title")}</span></button>
       </aside>
       <main className="content">
         {showSettings ? <SettingsPanel settings={settings} onSave={async (next) => { localStorage.setItem("popupScale", String(next.popupScale)); await persistSettings(next); setSettings(next); }} /> : <>
           <header className="toolbar">
             <div><h1>{currentLabel}</h1></div>
             <div className="toolbar-actions">
-              <label className="search"><span>⌕</span><input ref={searchInputRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="按 / 搜索标题、网址、来源或备注" /></label>
-              <button className="sort-button" type="button" aria-label="切换时间排序" title="点击切换时间排序" onClick={() => {
+              <label className="search"><span>⌕</span><input ref={searchInputRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t(settings.language, "queue.searchPlaceholder")} /></label>
+              <button className="sort-button" type="button" aria-label={t(settings.language, "queue.sortTitle")} title={t(settings.language, "queue.sortTitle")} onClick={() => {
                 const next = { ...settings, sortOrder: settings.sortOrder === "newest" ? "oldest" as const : "newest" as const };
                 setSettings(next); void persistSettings(next);
-              }}><span>{settings.sortOrder === "newest" ? "最新优先" : "最旧优先"}</span><strong aria-hidden="true">{settings.sortOrder === "newest" ? "↓" : "↑"}</strong></button>
+              }}><span>{settings.sortOrder === "newest" ? t(settings.language, "queue.sortNewest") : t(settings.language, "queue.sortOldest")}</span><strong aria-hidden="true">{settings.sortOrder === "newest" ? "↓" : "↑"}</strong></button>
             </div>
           </header>
           <section className="list grouped-list" aria-busy={loading}>
-            {[...grouped.entries()].map(([label, groupItems]) => <section className="queue-group" key={label}><h2>{label}{view === "source" && <span>{groupItems.length}</span>}</h2>{groupItems.map((item) => <QueueItem key={item.id} item={item} onChange={applyChange} />)}</section>)}
-            {!loading && visible.length === 0 && <div className="empty"><div>✓</div><h2>{query ? "没有匹配的条目" : view === "unread" ? "队列已清空" : "这里还没有内容"}</h2><p>{query ? "换一个关键词试试。" : "遇到想稍后阅读的页面时，用 Capture 快捷键加入队列。"}</p></div>}
-            {!loading && visible.length > 0 && <div className="item-count">{visible.length} 项</div>}
+            {[...grouped.entries()].map(([label, groupItems]) => <section className="queue-group" key={label}><h2>{label}{view === "source" && <span>{groupItems.length}</span>}</h2>{groupItems.map((item) => <QueueItem key={item.id} item={item} language={settings.language} onChange={applyChange} />)}</section>)}
+            {!loading && visible.length === 0 && <div className="empty"><div>✓</div><h2>{query ? t(settings.language, "queue.noResults") : view === "unread" ? t(settings.language, "queue.emptyUnread") : t(settings.language, "queue.emptyOther")}</h2><p>{query ? t(settings.language, "queue.tryAnotherQuery") : t(settings.language, "queue.emptyHelp")}</p></div>}
+            {!loading && visible.length > 0 && <div className="item-count">{t(settings.language, "queue.itemCount", { count: visible.length })}</div>}
           </section>
         </>}
       </main>

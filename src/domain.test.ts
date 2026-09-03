@@ -15,8 +15,9 @@ import {
 const page = { url: "https://www.Example.com/article?x=1#part", title: "Article" };
 
 describe("reading queue domain", () => {
-  it("defaults to following the system theme", () => {
+  it("defaults to following the system theme and using Chinese", () => {
     expect(DEFAULT_SETTINGS.theme).toBe("system");
+    expect(DEFAULT_SETTINGS.language).toBe("zh-CN");
   });
 
   it("normalizes domains without changing meaningful URL parts", () => {

@@ -1,4 +1,5 @@
 import { captureItem } from "./domain";
+import { t } from "./i18n";
 import type { RuntimeMessage, RuntimeResponse, CaptureSession } from "./messages";
 import {
   getCaptureSession,
@@ -21,7 +22,7 @@ async function captureActiveTab(): Promise<CaptureSession> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const startedAt = Date.now();
   if (!tab?.id || !isCapturable(tab.url)) {
-    const session = { startedAt, error: "这个页面不能加入阅读队列。请在普通网页上重试。" };
+    const session = { startedAt, error: t((await getSettings()).language, "background.captureUnavailable") };
     await setCaptureSession(session);
     return session;
   }
@@ -91,7 +92,7 @@ async function handleMessage(message: RuntimeMessage, sender?: chrome.runtime.Me
     }
     if (message.type === "CONFIRM_CAPTURE") {
       const item = await updateItem(message.itemId, (current) => ({ ...current, note: message.note }));
-      if (!item) return { ok: false, error: "找不到刚刚捕获的条目。" };
+      if (!item) return { ok: false, error: t((await getSettings()).language, "background.itemNotFound") };
       const settings = await getSettings();
       await chrome.storage.session.remove("captureSession");
       if (settings.closeAfterCapture && message.sourceTabId !== undefined) {
@@ -108,7 +109,7 @@ async function handleMessage(message: RuntimeMessage, sender?: chrome.runtime.Me
       await openQueue();
       return { ok: true };
     }
-    return { ok: false, error: "未知操作。" };
+    return { ok: false, error: t((await getSettings()).language, "background.unknownOperation") };
   } catch (error) {
     return { ok: false, error: errorMessage(error) };
   }

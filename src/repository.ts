@@ -43,6 +43,9 @@ export async function getSettings(): Promise<Settings> {
     theme: saved.theme === "light" || saved.theme === "dark" || saved.theme === "system"
       ? saved.theme
       : DEFAULT_SETTINGS.theme,
+    language: saved.language === "en" || saved.language === "zh-CN"
+      ? saved.language
+      : DEFAULT_SETTINGS.language,
   };
 }
 

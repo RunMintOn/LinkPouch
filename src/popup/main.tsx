@@ -3,15 +3,10 @@ import { createRoot } from "react-dom/client";
 import { sendMessage } from "../chrome";
 import type { CaptureOutcome } from "../messages";
 import { DEFAULT_SETTINGS, type Settings } from "../domain";
+import { captureOutcomeLabel, t } from "../i18n";
 import { applyTheme } from "../theme";
 import { isImeInput } from "./ime";
 import "./popup.css";
-
-const OUTCOME_TEXT: Record<CaptureOutcome, string> = {
-  created: "已加入阅读队列",
-  existing: "已在队列中，已移到顶部",
-  restored: "已重新加入队列",
-};
 
 function Popup() {
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -19,13 +14,14 @@ function Popup() {
   const chordTimer = useRef<number | undefined>(undefined);
   const [itemId, setItemId] = useState<string>();
   const [sourceTabId, setSourceTabId] = useState<number>();
-  const [title, setTitle] = useState("正在保存…");
+  const [title, setTitle] = useState(t(DEFAULT_SETTINGS.language, "popup.capturing"));
   const [domain, setDomain] = useState("");
   const [note, setNote] = useState("");
   const [settings, setSettings] = useState<Settings>();
   const [outcome, setOutcome] = useState<CaptureOutcome>("created");
   const [chord, setChord] = useState(false);
   const [error, setError] = useState<string>();
+  const language = settings?.language ?? DEFAULT_SETTINGS.language;
 
   useEffect(() => {
     if (!settings) return;
@@ -36,7 +32,7 @@ function Popup() {
   useEffect(() => {
     void sendMessage({ type: "CAPTURE_ACTIVE_TAB" }).then((response) => {
       if (!response.ok || !response.item || !response.session || !response.settings) {
-        setError(response.ok ? "无法读取捕获结果。" : response.error);
+        setError(response.ok ? t(DEFAULT_SETTINGS.language, "popup.captureReadFailed") : response.error);
         return;
       }
       setItemId(response.item.id);
@@ -106,12 +102,12 @@ function Popup() {
   }
 
   if (error) {
-    return <main className="popup error-state"><div className="capture-mark error">!</div><h1>无法捕获</h1><p>{error}</p><button onClick={() => window.close()}>关闭</button></main>;
+    return <main className="popup error-state"><div className="capture-mark error">!</div><h1>{t(language, "popup.captureFailed")}</h1><p>{error}</p><button onClick={() => window.close()}>{t(language, "popup.cancel")}</button></main>;
   }
 
   return (
     <main className="popup">
-      <header aria-label={OUTCOME_TEXT[outcome]}>
+      <header aria-label={captureOutcomeLabel(language, outcome)}>
         <img className="app-icon" src="/icon.png" alt="" />
         <div className="capture-copy"><strong title={title}>{title}</strong><small>{domain}</small></div>
       </header>
@@ -122,16 +118,16 @@ function Popup() {
         onCompositionStart={() => { compositionActive.current = true; }}
         onCompositionEnd={() => { compositionActive.current = false; }}
         onKeyDown={onKeyDown}
-        placeholder="为什么稍后要看？（可留空）"
-        aria-label="阅读备注"
+        placeholder={t(language, "popup.notePlaceholder")}
+        aria-label={t(language, "popup.noteLabel")}
       />
-      {settings?.presets.some(Boolean) && <section className="preset-list" aria-label="快捷备注">
-        <div className="preset-title"><span><i aria-hidden="true">✦</i>快捷备注</span><small>先按 ⌃E，再按数字</small></div>
+      {settings?.presets.some(Boolean) && <section className="preset-list" aria-label={t(language, "popup.presetNotes")}>
+        <div className="preset-title"><span><i aria-hidden="true">✦</i>{t(language, "popup.presetNotes")}</span><small>{t(language, "popup.presetHelp")}</small></div>
         <div className="preset-buttons">{settings.presets.map((preset, index) => preset && <button key={index} onClick={() => insertPreset(index)} title={preset}><kbd>{index + 1}</kbd><span>{preset}</span></button>)}</div>
       </section>}
       <footer>
-        <span className={chord ? "chord active" : "chord"}>{chord ? "请选择 1–9" : <><kbd>Esc</kbd> 取消</>}</span>
-        <span><kbd>⇧↵</kbd> 换行　 <kbd>↵</kbd> 保存</span>
+        <span className={chord ? "chord active" : "chord"}>{chord ? t(language, "popup.choosePreset") : <><kbd>Esc</kbd> {t(language, "popup.cancel")}</>}</span>
+        <span><kbd>⇧↵</kbd> {t(language, "popup.newline")}　 <kbd>↵</kbd> {t(language, "popup.save")}</span>
       </footer>
     </main>
   );
