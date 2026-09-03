@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/images/linkpouch.png" alt="LinkPouch" width="72">
+</p>
+
 # LinkPouch
 
 A local-first Chromium extension for quickly capturing pages, returning to them in the browser, and clearing the reading backlog.
