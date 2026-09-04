@@ -32,11 +32,17 @@ export async function removeItem(id: string): Promise<void> {
 
 export async function getSettings(): Promise<Settings> {
   const result = await chrome.storage.local.get(SETTINGS_KEY);
-  const saved = (result[SETTINGS_KEY] ?? {}) as Partial<Settings>;
+  const saved = (result[SETTINGS_KEY] ?? {}) as Partial<Settings> & { alwaysOpenNewTab?: boolean };
   return {
     ...DEFAULT_SETTINGS,
     ...saved,
     presets: [...DEFAULT_SETTINGS.presets].map((fallback, index) => saved.presets?.[index] ?? fallback),
+    openBehavior: saved.openBehavior === "allWindows" || saved.openBehavior === "queueWindow" || saved.openBehavior === "newTab"
+      ? saved.openBehavior
+      : saved.alwaysOpenNewTab ? "newTab" : DEFAULT_SETTINGS.openBehavior,
+    queueOpenBehavior: saved.queueOpenBehavior === "allWindows" || saved.queueOpenBehavior === "currentWindow"
+      ? saved.queueOpenBehavior
+      : DEFAULT_SETTINGS.queueOpenBehavior,
     popupScale: typeof saved.popupScale === "number"
       ? Math.min(1, Math.max(0.8, saved.popupScale))
       : DEFAULT_SETTINGS.popupScale,
@@ -51,6 +57,13 @@ export async function getSettings(): Promise<Settings> {
 
 export async function setSettings(settings: Settings): Promise<void> {
   await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
+}
+
+export async function restoreBackup(items: ReadingItem[], settings: Settings | undefined): Promise<void> {
+  await chrome.storage.local.set({
+    [ITEMS_KEY]: items,
+    ...(settings === undefined ? {} : { [SETTINGS_KEY]: settings }),
+  });
 }
 
 export async function getCaptureSession(): Promise<CaptureSession | undefined> {

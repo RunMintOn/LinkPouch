@@ -35,6 +35,12 @@ async function createHarness(): Promise<Harness> {
     url: "https://www.example.com/story?from=test#intro",
     title: "Example story",
   };
+  const queueTab: chrome.tabs.Tab = {
+    ...tab,
+    id: 8,
+    windowId: 99,
+    url: "chrome-extension://test/queue.html",
+  };
   let commandListener: ((command: string) => void | Promise<void>) | undefined;
   let messageListener: ((message: RuntimeMessage, sender: chrome.runtime.MessageSender, respond: (response: RuntimeResponse) => void) => boolean) | undefined;
   const openPopup = vi.fn(async () => undefined);
@@ -51,7 +57,9 @@ async function createHarness(): Promise<Harness> {
     storage: { local: storageArea(local), session: storageArea(session) },
     tabs: {
       query: vi.fn(async (query: chrome.tabs.QueryInfo) => {
-        if (query.url) return [];
+        if (query.url) {
+          return query.windowId === undefined || query.windowId === queueTab.windowId ? [queueTab] : [];
+        }
         if (query.windowId !== undefined && query.windowId !== tab.windowId) return [];
         return [tab];
       }),
@@ -145,8 +153,37 @@ describe("background browser workflow", () => {
     expect(harness.updatedTabs).toEqual([]);
   });
 
-  it("does not jump to an identical URL in another browser window", async () => {
+  it("focuses a queue page in another browser window by default", async () => {
     const harness = await createHarness();
+
+    await harness.command("open-reading-queue");
+
+    expect(harness.createdTabs).toEqual([]);
+    expect(harness.updatedTabs).toContainEqual({ id: 8, url: undefined, active: true });
+  });
+
+  it("opens a separate queue page in the current window when configured", async () => {
+    const harness = await createHarness();
+    harness.local.settings = { queueOpenBehavior: "currentWindow" };
+
+    await harness.command("open-reading-queue");
+
+    expect(harness.createdTabs).toEqual(["chrome-extension://test/queue.html"]);
+    expect(harness.updatedTabs).not.toContainEqual({ id: 8, url: undefined, active: true });
+  });
+
+  it("focuses an identical URL in another browser window by default", async () => {
+    const harness = await createHarness();
+
+    await harness.message({ type: "OPEN_ITEM", url: "https://www.example.com/story?from=test#intro" }, 99);
+
+    expect(harness.createdTabs).toEqual([]);
+    expect(harness.updatedTabs).toContainEqual({ id: 7, url: undefined, active: true });
+  });
+
+  it("limits reuse to the queue window when configured", async () => {
+    const harness = await createHarness();
+    harness.local.settings = { openBehavior: "queueWindow" };
 
     await harness.message({ type: "OPEN_ITEM", url: "https://www.example.com/story?from=test#intro" }, 99);
 

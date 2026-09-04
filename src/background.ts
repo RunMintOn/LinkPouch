@@ -52,13 +52,19 @@ async function openCapturePopup(session: CaptureSession): Promise<void> {
 
 async function openQueue(): Promise<void> {
   const queueUrl = chrome.runtime.getURL("queue.html");
-  const [existing] = await chrome.tabs.query({ url: `${queueUrl}*` });
+  const settings = await getSettings();
+  const [currentTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const currentWindowId = currentTab?.windowId;
+  const query = settings.queueOpenBehavior === "currentWindow" && currentWindowId !== undefined
+    ? { url: `${queueUrl}*`, windowId: currentWindowId }
+    : { url: `${queueUrl}*` };
+  const [existing] = await chrome.tabs.query(query);
   if (existing?.id) {
     await chrome.tabs.update(existing.id, { active: true });
     if (existing.windowId) await chrome.windows.update(existing.windowId, { focused: true });
     return;
   }
-  await chrome.tabs.create({ url: queueUrl, active: true });
+  await chrome.tabs.create({ url: queueUrl, active: true, windowId: currentWindowId });
 }
 
 async function focusTab(tab: chrome.tabs.Tab): Promise<void> {
@@ -69,9 +75,13 @@ async function focusTab(tab: chrome.tabs.Tab): Promise<void> {
 
 async function openItem(url: string, queueWindowId?: number): Promise<void> {
   const settings = await getSettings();
-  if (!settings.alwaysOpenNewTab && queueWindowId !== undefined) {
-    const existing = (await chrome.tabs.query({ windowId: queueWindowId }))
-      .find((tab) => tab.url === url);
+  const query = settings.openBehavior === "allWindows"
+    ? {}
+    : settings.openBehavior === "queueWindow" && queueWindowId !== undefined
+      ? { windowId: queueWindowId }
+      : undefined;
+  if (query) {
+    const existing = (await chrome.tabs.query(query)).find((tab) => tab.url === url);
     if (existing) {
       await focusTab(existing);
       return;

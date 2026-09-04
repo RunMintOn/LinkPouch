@@ -3,6 +3,8 @@ export type QueueView = "unread" | "today" | "week" | "source" | "done" | "trash
 export type SortOrder = "newest" | "oldest";
 export type Theme = "system" | "light" | "dark";
 export type Language = "zh-CN" | "en";
+export type OpenBehavior = "allWindows" | "queueWindow" | "newTab";
+export type QueueOpenBehavior = "allWindows" | "currentWindow";
 
 export interface ReadingItem {
   id: string;
@@ -19,7 +21,8 @@ export interface ReadingItem {
 export interface Settings {
   presets: string[];
   closeAfterCapture: boolean;
-  alwaysOpenNewTab: boolean;
+  openBehavior: OpenBehavior;
+  queueOpenBehavior: QueueOpenBehavior;
   popupScale: number;
   sortOrder: SortOrder;
   theme: Theme;
@@ -29,7 +32,8 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   presets: ["这个项目可能有用", "以后仔细研究", "和当前项目有关", "值得分享", "", "", "", "", ""],
   closeAfterCapture: false,
-  alwaysOpenNewTab: false,
+  openBehavior: "allWindows",
+  queueOpenBehavior: "allWindows",
   popupScale: 0.9,
   sortOrder: "newest",
   theme: "system",

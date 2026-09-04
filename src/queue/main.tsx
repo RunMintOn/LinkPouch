@@ -13,9 +13,10 @@ import {
   type ReadingItem,
   type Settings,
 } from "../domain";
+import { createBackup, parseBackup, type RestoredBackup } from "../backup";
 import { t, viewLabel } from "../i18n";
 import { sendMessage } from "../chrome";
-import { getItems, getSettings, removeItem, setItems as persistItems, setSettings as persistSettings } from "../repository";
+import { getItems, getSettings, removeItem, restoreBackup, setItems as persistItems, setSettings as persistSettings } from "../repository";
 import { applyTheme } from "../theme";
 import "./queue.css";
 
@@ -106,47 +107,93 @@ function QueueItem({ item, language, onChange }: { item: ReadingItem; language: 
   );
 }
 
-function SettingsPanel({ settings, onSave }: { settings: Settings; onSave: (settings: Settings) => Promise<void> }) {
+function SettingsPanel({
+  settings,
+  items,
+  onSave,
+  onRestore,
+}: {
+  settings: Settings;
+  items: ReadingItem[];
+  onSave: (settings: Settings) => Promise<void>;
+  onRestore: (backup: RestoredBackup) => Promise<void>;
+}) {
   const [draft, setDraft] = useState(settings);
-  const [saved, setSaved] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [restoreStatus, setRestoreStatus] = useState<string>();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const language = draft.language;
 
-  useEffect(() => setDraft(settings), [settings]);
+  useEffect(() => { setDraft(settings); setDirty(false); }, [settings]);
+
+  function updateDraft(next: Settings) {
+    setDraft(next);
+    setDirty(true);
+  }
 
   async function save() {
     await onSave(draft);
-    setSaved(true);
-    window.setTimeout(() => setSaved(false), 1400);
+    setDirty(false);
+  }
+
+  function downloadBackup() {
+    const data = JSON.stringify(createBackup(items, settings), null, 2);
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([data], { type: "application/json" }));
+    link.download = `linkpouch-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
+
+  async function restore(file: File) {
+    try {
+      const backup = parseBackup(await file.text());
+      if (!window.confirm(t(language, "settings.restoreConfirm", { count: items.length }))) return;
+      await onRestore(backup);
+      setRestoreStatus(t(language, "settings.restoreSuccess", { count: backup.items.length }));
+    } catch {
+      setRestoreStatus(t(language, "settings.restoreError"));
+    }
   }
 
   return (
     <section className="settings-panel">
-      <div className="section-title"><h1>{t(language, "settings.title")}</h1></div>
+      <div className="section-title settings-title"><h1>{t(language, "settings.title")}</h1><button className="settings-save" disabled={!dirty} onClick={() => void save()}>{dirty ? t(language, "settings.save") : t(language, "settings.saved")}</button></div>
       <div className="settings-card">
         <h2>{t(language, "settings.appearance")}</h2>
-        <label className="select-row"><div><strong>{t(language, "settings.theme")}</strong><small>{t(language, "settings.themeHelp")}</small></div><select value={draft.theme} onChange={(e) => setDraft({ ...draft, theme: e.target.value as Settings["theme"] })}><option value="system">{t(language, "settings.themeSystem")}</option><option value="light">{t(language, "settings.themeLight")}</option><option value="dark">{t(language, "settings.themeDark")}</option></select></label>
-        <label className="select-row"><div><strong>{t(language, "settings.language")}</strong><small>{t(language, "settings.languageHelp")}</small></div><select value={language} onChange={(e) => setDraft({ ...draft, language: e.target.value as Settings["language"] })}><option value="zh-CN">{t(language, "settings.languageChinese")}</option><option value="en">{t(language, "settings.languageEnglish")}</option></select></label>
+        <label className="select-row"><div><strong>{t(language, "settings.theme")}</strong><small>{t(language, "settings.themeHelp")}</small></div><select value={draft.theme} onChange={(e) => updateDraft({ ...draft, theme: e.target.value as Settings["theme"] })}><option value="system">{t(language, "settings.themeSystem")}</option><option value="light">{t(language, "settings.themeLight")}</option><option value="dark">{t(language, "settings.themeDark")}</option></select></label>
+        <label className="select-row"><div><strong>{t(language, "settings.language")}</strong><small>{t(language, "settings.languageHelp")}</small></div><select value={language} onChange={(e) => updateDraft({ ...draft, language: e.target.value as Settings["language"] })}><option value="zh-CN">{t(language, "settings.languageChinese")}</option><option value="en">{t(language, "settings.languageEnglish")}</option></select></label>
       </div>
       <div className="settings-card">
         <h2>{t(language, "settings.browsing")}</h2>
-        <label className="toggle-row"><div><strong>{t(language, "settings.closeAfterCapture")}</strong><small>{t(language, "settings.closeAfterCaptureHelp")}</small></div><input type="checkbox" checked={draft.closeAfterCapture} onChange={(e) => setDraft({ ...draft, closeAfterCapture: e.target.checked })} /></label>
-        <label className="toggle-row"><div><strong>{t(language, "settings.alwaysNewTab")}</strong><small>{t(language, "settings.alwaysNewTabHelp")}</small></div><input type="checkbox" checked={draft.alwaysOpenNewTab} onChange={(e) => setDraft({ ...draft, alwaysOpenNewTab: e.target.checked })} /></label>
+        <label className="toggle-row"><div><strong>{t(language, "settings.closeAfterCapture")}</strong><small>{t(language, "settings.closeAfterCaptureHelp")}</small></div><input type="checkbox" checked={draft.closeAfterCapture} onChange={(e) => updateDraft({ ...draft, closeAfterCapture: e.target.checked })} /></label>
+        <label className="select-row"><div><strong>{t(language, "settings.openBehavior")}</strong><small>{t(language, "settings.openBehaviorHelp")}</small></div><select value={draft.openBehavior} onChange={(e) => updateDraft({ ...draft, openBehavior: e.target.value as Settings["openBehavior"] })}><option value="allWindows">{t(language, "settings.openBehaviorAllWindows")}</option><option value="queueWindow">{t(language, "settings.openBehaviorQueueWindow")}</option><option value="newTab">{t(language, "settings.openBehaviorNewTab")}</option></select></label>
+        <label className="select-row"><div><strong>{t(language, "settings.queueOpenBehavior")}</strong><small>{t(language, "settings.queueOpenBehaviorHelp")}</small></div><select value={draft.queueOpenBehavior} onChange={(e) => updateDraft({ ...draft, queueOpenBehavior: e.target.value as Settings["queueOpenBehavior"] })}><option value="allWindows">{t(language, "settings.queueOpenBehaviorAllWindows")}</option><option value="currentWindow">{t(language, "settings.queueOpenBehaviorCurrentWindow")}</option></select></label>
       </div>
       <div className="settings-card">
         <h2>{t(language, "settings.quickCapture")}</h2>
         <label className="scale-row">
           <div><strong>{t(language, "settings.popupSize")}</strong><small>{t(language, "settings.popupSizeHelp")}</small></div>
-          <div className="scale-control"><input type="range" min="80" max="100" step="5" value={Math.round(draft.popupScale * 100)} onChange={(e) => setDraft({ ...draft, popupScale: Number(e.target.value) / 100 })} /><output>{Math.round(draft.popupScale * 100)}%</output></div>
+          <div className="scale-control"><input type="range" min="80" max="100" step="5" value={Math.round(draft.popupScale * 100)} onChange={(e) => updateDraft({ ...draft, popupScale: Number(e.target.value) / 100 })} /><output>{Math.round(draft.popupScale * 100)}%</output></div>
         </label>
       </div>
       <div className="settings-card">
         <h2>{t(language, "settings.presetNotes")}</h2>
         <p className="settings-help">{t(language, "settings.presetNotesHelp")}</p>
         <div className="preset-grid">{draft.presets.map((preset, index) => <label key={index}><span>{index + 1}</span><input value={preset} maxLength={100} placeholder={t(language, "settings.emptyPreset")} onChange={(e) => {
-          const presets = [...draft.presets]; presets[index] = e.target.value; setDraft({ ...draft, presets });
+          const presets = [...draft.presets]; presets[index] = e.target.value; updateDraft({ ...draft, presets });
         }} /></label>)}</div>
       </div>
-      <button className="primary" onClick={() => void save()}>{saved ? t(language, "settings.saved") : t(language, "settings.save")}</button>
+      <div className="settings-card">
+        <h2>{t(language, "settings.backupRestore")}</h2>
+        <div className="backup-row"><div><strong>{t(language, "settings.exportBackup")}</strong><small>{t(language, "settings.backupHelp")}</small></div><button className="secondary" type="button" onClick={downloadBackup}>{t(language, "settings.exportBackup")}</button></div>
+        <div className="backup-row"><div><strong>{t(language, "settings.restoreBackup")}</strong><small>{t(language, "settings.restoreHelp")}</small></div><button className="secondary" type="button" onClick={() => fileInputRef.current?.click()}>{t(language, "settings.restoreBackup")}</button><input ref={fileInputRef} className="file-input" type="file" accept="application/json,.json" onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file) void restore(file);
+        }} /></div>
+        {restoreStatus && <p className="backup-status" role="status">{restoreStatus}</p>}
+      </div>
     </section>
   );
 }
@@ -235,7 +282,14 @@ function App() {
         <button className={showSettings ? "settings-link active" : "settings-link"} onClick={() => setShowSettings(true)}><NavIcon view="settings" /><span>{t(settings.language, "settings.title")}</span></button>
       </aside>
       <main className="content">
-        {showSettings ? <SettingsPanel settings={settings} onSave={async (next) => { localStorage.setItem("popupScale", String(next.popupScale)); await persistSettings(next); setSettings(next); }} /> : <>
+        {showSettings ? <SettingsPanel settings={settings} items={items} onSave={async (next) => { localStorage.setItem("popupScale", String(next.popupScale)); await persistSettings(next); setSettings(next); }} onRestore={async (backup) => {
+          await restoreBackup(backup.items, backup.settings);
+          setItems(backup.items);
+          if (backup.settings) {
+            localStorage.setItem("popupScale", String(backup.settings.popupScale));
+            setSettings(backup.settings);
+          }
+        }} /> : <>
           <header className="toolbar">
             <div><h1>{currentLabel}</h1></div>
             <div className="toolbar-actions">
