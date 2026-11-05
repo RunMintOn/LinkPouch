@@ -86,11 +86,17 @@ try {
   await collection.getByPlaceholder("按 / 搜索正文、标题或备注").fill("星际花园");
   await collection.locator(".queue-item").waitFor();
   assert.equal(await collection.locator(".queue-item").count(), 1);
-  await collection.locator(".queue-item").hover();
-  await collection.getByRole("button", { name: "查看内容" }).click();
+  const cardBounds = await collection.locator(".queue-item").boundingBox();
+  const tabCount = context.pages().length;
+  await collection.locator(".card-preview").click();
   await collection.locator(".saved-content").waitFor();
+  assert.deepEqual(await collection.locator(".queue-item").boundingBox(), cardBounds);
+  assert.equal(context.pages().length, tabCount);
   await collection.screenshot({ path: "/tmp/linkpouch-content.png", fullPage: true });
-  console.log("PASS: body search and saved-content view");
+  await collection.keyboard.press("Escape");
+  await collection.locator(".item-detail").waitFor({ state: "detached" });
+  assert.equal(await collection.getByPlaceholder("按 / 搜索正文、标题或备注").inputValue(), "星际花园");
+  console.log("PASS: body search and inline preview; cards, tabs, and query stay in place");
 
   await collection.evaluate(async ({ itemId, sourceTabId }) => {
     await chrome.storage.session.set({ captureSession: { itemId, sourceTabId, startedAt: Date.now(), outcome: "created" } });

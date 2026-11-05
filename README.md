@@ -46,7 +46,9 @@ Chrome or macOS may reserve a suggested shortcut. Assign another combination fro
 
 Capture extracts content with Defuddle and persists it before opening Quick Capture. The popup previews what was saved. Enter confirms the note; Shift+Enter adds a line; Escape dismisses note editing without removing the captured item. Press Ctrl+E followed by 1–9 to insert a configured preset.
 
-Text selections from the same URL are separate items. Full pages still deduplicate by URL. Search includes saved body text. All saved includes both Unread and Done items, excluding Trash. Use **View content** to read the saved copy; clicking an item still opens its source.
+Text selections from the same URL are separate items. Full pages still deduplicate by URL. Search includes saved body text. All saved includes both Unread and Done items, excluding Trash.
+
+The collection opens as a masonry wall of images, text, and notes, grouped by Today, This week, and Earlier. Click a card to read its saved content in the right-hand panel without rearranging the wall; Escape closes the panel. **Source page** opens the original using your configured tab behavior. Cards use saved remote image URLs, not downloaded copies. Older items without saved content still show their titles and notes.
 
 ## Collect images
 

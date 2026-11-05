@@ -58,8 +58,37 @@ function SiteIcon({ item }: { item: ReadingItem }) {
   return <img className="site-favicon" src={favicon.href} alt="" onError={() => setFailed(true)} />;
 }
 
-function QueueItem({ item, language, onChange, onPreview }: { item: ReadingItem; language: Settings["language"]; onChange: (next: ReadingItem | null) => void; onPreview: (item: ReadingItem) => void }) {
+function itemTitle(item: ReadingItem): string {
+  return /^Post by .+ on X$/i.test(item.title) ? "" : item.title;
+}
+
+function itemSource(item: ReadingItem): string {
+  const author = item.url.match(/^https?:\/\/(?:www\.)?(?:x|twitter)\.com\/([^/]+)\/status\//)?.[1];
+  return item.content?.author || (author ? `@${author}` : item.domain);
+}
+
+function CardImage({ image, count }: { image: NonNullable<ReadingItem["images"]>[number]; count: number }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return <div className="card-media">
+    <img src={image.url} alt={image.alt} loading="lazy" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+    {count > 1 && <span className="card-image-count">{count}</span>}
+  </div>;
+}
+
+function QueueItem({ item, language, selected, onChange, onPreview }: { item: ReadingItem; language: Settings["language"]; selected: boolean; onChange: (next: ReadingItem | null) => void; onPreview: (item: ReadingItem) => void }) {
   const state = stateOf(item);
+  const cardRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const card = cardRef.current!;
+    // Pixel-sized rows reserve the card height plus its bottom spacing.
+    const observer = new ResizeObserver(([entry]) => {
+      card.style.gridRowEnd = `span ${Math.ceil(entry.contentRect.height + 16)}`;
+    });
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, []);
 
   async function update(transform: (value: ReadingItem) => ReadingItem) {
     const all = await getItems();
@@ -68,61 +97,67 @@ function QueueItem({ item, language, onChange, onPreview }: { item: ReadingItem;
     onChange(nextItem);
   }
 
-  function open() {
-    void sendMessage({ type: "OPEN_ITEM", url: item.url });
-  }
-
   return (
-    <article className="queue-item" tabIndex={0} onClick={open} onKeyDown={(event) => {
-      if (event.key === "Enter" && event.target === event.currentTarget) open();
-    }}>
-      <button
-        className={state === "done" ? "check checked" : "check"}
-        title={state === "done" ? t(language, "queue.markUnread") : t(language, "queue.markDone")}
-        aria-label={state === "done" ? t(language, "queue.markUnread") : t(language, "queue.markDone")}
-        onClick={(event) => {
-          event.stopPropagation();
-          void update(state === "done" ? markUnread : markDone);
-        }}
-        disabled={state === "trash"}
-      >{state === "done" ? "✓" : ""}</button>
-      <SiteIcon item={item} />
-      <div className="item-body">
-        {item.note && <p className="item-note">{item.note}</p>}
-        {item.content?.kind === "selection" && <p className="item-excerpt">{item.content.text}</p>}
-        <div className="item-detail-row">
-          <div className="item-heading">
-            <h2>{item.title}</h2>
-            {state !== "unread" && <span className={`state ${state}`}>{state === "done" ? t(language, "state.done") : t(language, "state.trash")}</span>}
+    <article ref={cardRef} className={`queue-item${selected ? " selected" : ""}`}>
+      <button className="card-preview" onClick={() => onPreview(item)} aria-label={`${t(language, "content.view")}: ${itemTitle(item) || itemSource(item)}`} aria-pressed={selected}>
+        {item.images?.[0] && <CardImage key={item.images[0].url} image={item.images[0]} count={item.images.length} />}
+        <div className="card-body">
+          <div className="card-source">
+            <SiteIcon item={item} />
+            <span>{itemSource(item)}</span>
+            <time dateTime={new Date(item.queuedAt).toISOString()}>{relativeDate(item.queuedAt, language)}</time>
           </div>
-          <div className="meta"><span>{item.domain}</span><span>·</span><time>{relativeDate(item.queuedAt, language)}</time></div>
+          {itemTitle(item) && <h2>{itemTitle(item)}</h2>}
+          {item.content?.text && <p className="card-excerpt">{item.content.text}</p>}
+          {item.note && <p className="item-note">{item.note}</p>}
         </div>
-      </div>
-      <div className="item-actions">
-        {item.content && <button onClick={(event) => { event.stopPropagation(); onPreview(item); }}>{t(language, "content.view")}</button>}
-        {state === "trash" ? <>
-          <button onClick={(event) => { event.stopPropagation(); void update(restoreFromTrash); }}>{t(language, "queue.restore")}</button>
-          <button className="danger" onClick={(event) => {
-            event.stopPropagation();
-            if (window.confirm(t(language, "queue.deleteForeverConfirm"))) void removeItem(item.id).then(() => onChange(null));
-          }}>{t(language, "queue.deleteForever")}</button>
-        </> : <button onClick={(event) => { event.stopPropagation(); void update(moveToTrash); }}>{t(language, "queue.delete")}</button>}
+      </button>
+      <div className="card-actions">
+        <button
+          className={state === "done" ? "check checked" : "check"}
+          title={state === "done" ? t(language, "queue.markUnread") : t(language, "queue.markDone")}
+          aria-label={state === "done" ? t(language, "queue.markUnread") : t(language, "queue.markDone")}
+          onClick={() => void update(state === "done" ? markUnread : markDone)}
+          disabled={state === "trash"}
+        >{state === "done" ? "✓" : ""}</button>
+        {state !== "unread" && <span className={`state ${state}`}>{state === "done" ? t(language, "state.done") : t(language, "state.trash")}</span>}
+        <div className="card-item-actions">
+          {state === "trash" ? <>
+            <button onClick={() => void update(restoreFromTrash)}>{t(language, "queue.restore")}</button>
+            <button className="danger" onClick={() => {
+              if (window.confirm(t(language, "queue.deleteForeverConfirm"))) void removeItem(item.id).then(() => onChange(null));
+            }}>{t(language, "queue.deleteForever")}</button>
+          </> : <button onClick={() => void update(moveToTrash)}>{t(language, "queue.delete")}</button>}
+        </div>
       </div>
     </article>
   );
 }
 
 function ItemDetail({ item, language, onBack }: { item: ReadingItem; language: Settings["language"]; onBack: () => void }) {
-  return <section className="item-detail">
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const previousFocus = document.activeElement as HTMLElement;
+    closeButton.current?.focus({ preventScroll: true });
+    return () => previousFocus.focus({ preventScroll: true });
+  }, []);
+
+  return <section className="item-detail" aria-label={t(language, "content.view")}>
     <div className="detail-toolbar">
-      <button className="secondary" onClick={onBack}>← {t(language, "content.back")}</button>
-      <a href={item.url} target="_blank" rel="noreferrer">{t(language, "content.source")} ↗</a>
+      <a href={item.url} target="_blank" rel="noreferrer" onClick={(event) => {
+        event.preventDefault();
+        void sendMessage({ type: "OPEN_ITEM", url: item.url });
+      }}>{t(language, "content.source")} ↗</a>
       {item.images?.some((image) => new URL(image.url).hostname === "pbs.twimg.com") && <button className="secondary" onClick={() => void sendMessage({ type: "OPEN_QUEUE", itemId: item.id, download: true })}>{t(language, "gallery.download")} · {item.images.length}</button>}
+      <button ref={closeButton} className="detail-close" onClick={onBack} aria-label={t(language, "content.close")}>×</button>
     </div>
-    <h1>{item.title}</h1>
-    <p className="detail-meta">{item.content?.author || item.domain} · {new Date(item.createdAt).toLocaleDateString(language)} · {t(language, item.content?.kind === "selection" ? "content.selection" : "content.page")}</p>
+    <h2>{itemTitle(item) || itemSource(item)}</h2>
+    <p className="detail-meta">{itemSource(item)} · {new Date(item.queuedAt).toLocaleDateString(language)}{item.content && ` · ${t(language, item.content.kind === "selection" ? "content.selection" : "content.page")}`}</p>
     {item.note && <p className="detail-note">{item.note}</p>}
-    {item.content && <SavedContent content={item.content} />}
+    {item.content ? <SavedContent content={item.content} /> : <>
+      <p className="detail-missing">{t(language, "content.notSaved")}</p>
+      {item.images?.map((image) => <img className="detail-image" key={image.url} src={image.url} alt={image.alt} loading="lazy" referrerPolicy="no-referrer" />)}
+    </>}
   </section>;
 }
 
@@ -246,6 +281,15 @@ function App() {
   useEffect(() => applyTheme(settings.theme), [settings.theme]);
 
   useEffect(() => {
+    if (!selectedId) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedId(null);
+    };
+    document.addEventListener("keydown", close);
+    return () => document.removeEventListener("keydown", close);
+  }, [selectedId]);
+
+  useEffect(() => {
     function focusSearch(event: KeyboardEvent) {
       const target = event.target;
       const isEditing = target instanceof HTMLInputElement
@@ -267,7 +311,8 @@ function App() {
   }, [items, query, settings.sortOrder, view]);
 
   const grouped = useMemo(() => {
-    if (view === "source" && !query.trim()) {
+    if (query.trim()) return new Map([["", visible]]);
+    if (view === "source") {
       return visible.reduce((groups, item) => {
         const group = groups.get(item.domain) ?? [];
         group.push(item);
@@ -277,8 +322,12 @@ function App() {
     }
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const week = new Date(today);
+    week.setDate(week.getDate() - ((week.getDay() + 6) % 7));
     return visible.reduce((groups, item) => {
-      const label = item.queuedAt >= today.getTime() ? t(settings.language, "queue.today") : t(settings.language, "queue.earlier");
+      const label = item.queuedAt >= today.getTime() ? t(settings.language, "queue.today")
+        : item.queuedAt >= week.getTime() ? t(settings.language, "view.week")
+        : t(settings.language, "queue.earlier");
       const group = groups.get(label) ?? [];
       group.push(item);
       groups.set(label, group);
@@ -297,7 +346,7 @@ function App() {
 
   return (
     <div className="shell">
-      <aside>
+      <aside className="sidebar">
         <div className="brand"><img className="logo" src="/icon.png" alt="" /><div><strong>LinkPouch</strong><span>{t(settings.language, "queue.unreadCount", { count: unreadCount })}</span></div></div>
         <nav>{VIEWS.map((id) => {
           const count = itemsForView(items, id, settings.sortOrder).length;
@@ -313,7 +362,7 @@ function App() {
             localStorage.setItem("popupScale", String(backup.settings.popupScale));
             setSettings(backup.settings);
           }
-        }} /> : showGallery ? <Gallery language={settings.language} pendingItem={items.find((item) => item.id === downloadId)} onDownloaded={() => setDownloadId(null)} /> : selectedItem ? <ItemDetail item={selectedItem} language={settings.language} onBack={() => setSelectedId(null)} /> : <>
+        }} /> : showGallery ? <Gallery language={settings.language} pendingItem={items.find((item) => item.id === downloadId)} onDownloaded={() => setDownloadId(null)} /> : <>
           <header className="toolbar">
             <div><h1>{currentLabel}</h1></div>
             <div className="toolbar-actions">
@@ -325,12 +374,18 @@ function App() {
             </div>
           </header>
           <section className="list grouped-list" aria-busy={loading}>
-            {[...grouped.entries()].map(([label, groupItems]) => <section className="queue-group" key={label}><h2>{label}{view === "source" && <span>{groupItems.length}</span>}</h2>{groupItems.map((item) => <QueueItem key={item.id} item={item} language={settings.language} onChange={applyChange} onPreview={(value) => setSelectedId(value.id)} />)}</section>)}
+            {[...grouped.entries()].map(([label, groupItems]) => <section className="queue-group" key={label}>
+              {label && <h2>{label}{view === "source" && <span>{groupItems.length}</span>}</h2>}
+              <div className="card-grid">
+                {groupItems.map((item) => <QueueItem key={item.id} item={item} language={settings.language} selected={item.id === selectedId} onChange={applyChange} onPreview={(value) => setSelectedId(value.id)} />)}
+              </div>
+            </section>)}
             {!loading && visible.length === 0 && <div className="empty"><div>✓</div><h2>{query ? t(settings.language, "queue.noResults") : view === "unread" ? t(settings.language, "queue.emptyUnread") : t(settings.language, "queue.emptyOther")}</h2><p>{query ? t(settings.language, "queue.tryAnotherQuery") : t(settings.language, "queue.emptyHelp")}</p></div>}
             {!loading && visible.length > 0 && <div className="item-count">{t(settings.language, "queue.itemCount", { count: visible.length })}</div>}
           </section>
         </>}
       </main>
+      {!showSettings && !showGallery && selectedItem && <ItemDetail key={selectedItem.id} item={selectedItem} language={settings.language} onBack={() => setSelectedId(null)} />}
     </div>
   );
 }
