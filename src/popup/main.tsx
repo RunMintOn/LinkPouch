@@ -2,7 +2,8 @@ import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { sendMessage } from "../chrome";
 import type { CaptureOutcome } from "../messages";
-import { DEFAULT_SETTINGS, type Settings } from "../domain";
+import { DEFAULT_SETTINGS, type ReadingItem, type Settings } from "../domain";
+import { SavedContent } from "../SavedContent";
 import { captureOutcomeLabel, t } from "../i18n";
 import { applyTheme } from "../theme";
 import { isImeInput } from "./ime";
@@ -13,6 +14,8 @@ function Popup() {
   const compositionActive = useRef(false);
   const chordTimer = useRef<number | undefined>(undefined);
   const [itemId, setItemId] = useState<string>();
+  const [item, setItem] = useState<ReadingItem>();
+  const [extractionError, setExtractionError] = useState("");
   const [sourceTabId, setSourceTabId] = useState<number>();
   const [title, setTitle] = useState(t(DEFAULT_SETTINGS.language, "popup.capturing"));
   const [domain, setDomain] = useState("");
@@ -36,6 +39,8 @@ function Popup() {
         return;
       }
       setItemId(response.item.id);
+      setItem(response.item);
+      setExtractionError(response.session.extractionError ?? "");
       setSourceTabId(response.session.sourceTabId);
       setTitle(response.item.title);
       setDomain(response.item.domain);
@@ -71,6 +76,14 @@ function Popup() {
       setError(response.error);
       return;
     }
+    window.close();
+  }
+
+  async function openCollection(download = false) {
+    if (!itemId) return;
+    const saved = await sendMessage({ type: "CONFIRM_CAPTURE", itemId, note });
+    if (!saved.ok) { setError(saved.error); return; }
+    await sendMessage({ type: "OPEN_QUEUE", itemId, download });
     window.close();
   }
 
@@ -111,6 +124,17 @@ function Popup() {
         <img className="app-icon" src="/icon.png" alt="" />
         <div className="capture-copy"><strong title={title}>{title}</strong><small>{domain}</small></div>
       </header>
+      {item && <section className="capture-preview">
+        <p className="capture-status" title={extractionError}>✓ {t(language, !item.content ? "popup.linkOnly" : item.content.kind === "selection" ? "popup.savedSelection" : "popup.savedPage")}</p>
+        {item.content && <details>
+          <summary><span>{t(language, "popup.expand")}</span><p className="preview-text">{item.content.text || item.images?.map((image) => image.alt).join(" · ")}</p></summary>
+          <SavedContent content={item.content} />
+        </details>}
+        <div className="capture-actions">
+          <button onClick={() => void openCollection()}>{t(language, "popup.openCollection")}</button>
+          {item.images?.some((image) => new URL(image.url).hostname === "pbs.twimg.com") && <button onClick={() => void openCollection(true)}>{t(language, "gallery.download")} · {item.images.length}</button>}
+        </div>
+      </section>}
       <textarea
         ref={textarea}
         value={note}

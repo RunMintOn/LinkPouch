@@ -1,24 +1,29 @@
 # LinkPouch
 
-LinkPouch is a browser-native queue for temporarily deferring pages and resolving that backlog without creating a curated library.
+LinkPouch is a local-first collection of saved pages, text selections, and images. Keeping content long-term is intentional; the reading queue is one view of the collection, not its purpose.
 
 ## Language
 
+**Collection**:
+Saved content retained until the user explicitly removes it. It includes reading items and collected images.
+
 **Reading Queue**:
-The operational backlog of pages that a user still intends to read.
-_Avoid_: Bookmark library, knowledge base, collection
+The subset of the collection that the user still intends to read.
 
 **Reading Item**:
-One captured URL together with its title, source domain, note, and lifecycle timestamps.
-_Avoid_: Bookmark, document
+One saved page or text selection, with its source URL, title, optional note, content, and lifecycle timestamps. Multiple selections from the same source are distinct items.
 
 **Capture**:
-The act of placing the active browser page into Unread immediately, before optional note editing finishes.
-_Avoid_: Bookmark, archive
+Saving the active page's content, or only its selected text when a text selection exists, before optional note editing finishes.
 
 **Quick Capture**:
-The small extension-owned interface used to confirm a Capture and optionally edit its note.
-_Avoid_: Editor, reader
+The small extension-owned interface showing what Capture saved and allowing optional note editing.
+
+**Collected Image**:
+An image explicitly saved to the user's authorized directory, with a link back to its source post. Collecting images is separate from saving a page's body.
+
+**Gallery**:
+A view of collected images read from their directory, not another copy of the image collection.
 
 **Unread**:
 The reading state for an item that remains in the active queue.

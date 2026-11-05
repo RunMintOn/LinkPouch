@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build --config vite.content.config.ts",
     "dev": "vite",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -20,7 +20,9 @@
     "@types/react-dom": "latest",
     "@types/chrome": "latest",
     "vitest": "latest",
-    "jsdom": "latest"
+    "jsdom": "latest",
+    "defuddle": "^0.19.6",
+    "dompurify": "^3.4.17"
   },
   "devDependencies": {}
 }

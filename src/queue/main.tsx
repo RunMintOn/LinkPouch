@@ -18,12 +18,15 @@ import { t, viewLabel } from "../i18n";
 import { sendMessage } from "../chrome";
 import { getItems, getSettings, removeItem, restoreBackup, setItems as persistItems, setSettings as persistSettings } from "../repository";
 import { applyTheme } from "../theme";
+import { SavedContent } from "../SavedContent";
+import { Gallery } from "./Gallery";
 import "./queue.css";
 
-const VIEWS: QueueView[] = ["unread", "today", "week", "source", "done", "trash"];
+const VIEWS: QueueView[] = ["all", "unread", "today", "week", "source", "done", "trash"];
 
 function NavIcon({ view }: { view: QueueView | "settings" }) {
   const paths: Record<QueueView | "settings", React.ReactNode> = {
+    all: <><rect x="3" y="3" width="14" height="14" rx="2" /><path d="M7 7h6M7 10h6M7 13h4" /></>,
     unread: <><rect x="4" y="3" width="12" height="14" rx="2" /><path d="M8 7h4M8 10h5M8 13h3" /></>,
     today: <><path d="m10 2 2.1 2.2 3 .4.4 3L18 10l-2.5 2.4-.4 3-3 .4L10 18l-2.1-2.2-3-.4-.4-3L2 10l2.5-2.4.4-3 3-.4L10 2Z" /><path d="M10 6v4l2 1" /></>,
     week: <><rect x="3" y="5" width="14" height="12" rx="2" /><path d="M6 3v4M14 3v4M3 9h14M7 12h2M11 12h2" /></>,
@@ -55,7 +58,7 @@ function SiteIcon({ item }: { item: ReadingItem }) {
   return <img className="site-favicon" src={favicon.href} alt="" onError={() => setFailed(true)} />;
 }
 
-function QueueItem({ item, language, onChange }: { item: ReadingItem; language: Settings["language"]; onChange: (next: ReadingItem | null) => void }) {
+function QueueItem({ item, language, onChange, onPreview }: { item: ReadingItem; language: Settings["language"]; onChange: (next: ReadingItem | null) => void; onPreview: (item: ReadingItem) => void }) {
   const state = stateOf(item);
 
   async function update(transform: (value: ReadingItem) => ReadingItem) {
@@ -71,7 +74,7 @@ function QueueItem({ item, language, onChange }: { item: ReadingItem; language: 
 
   return (
     <article className="queue-item" tabIndex={0} onClick={open} onKeyDown={(event) => {
-      if (event.key === "Enter") open();
+      if (event.key === "Enter" && event.target === event.currentTarget) open();
     }}>
       <button
         className={state === "done" ? "check checked" : "check"}
@@ -86,6 +89,7 @@ function QueueItem({ item, language, onChange }: { item: ReadingItem; language: 
       <SiteIcon item={item} />
       <div className="item-body">
         {item.note && <p className="item-note">{item.note}</p>}
+        {item.content?.kind === "selection" && <p className="item-excerpt">{item.content.text}</p>}
         <div className="item-detail-row">
           <div className="item-heading">
             <h2>{item.title}</h2>
@@ -95,6 +99,7 @@ function QueueItem({ item, language, onChange }: { item: ReadingItem; language: 
         </div>
       </div>
       <div className="item-actions">
+        {item.content && <button onClick={(event) => { event.stopPropagation(); onPreview(item); }}>{t(language, "content.view")}</button>}
         {state === "trash" ? <>
           <button onClick={(event) => { event.stopPropagation(); void update(restoreFromTrash); }}>{t(language, "queue.restore")}</button>
           <button className="danger" onClick={(event) => {
@@ -105,6 +110,20 @@ function QueueItem({ item, language, onChange }: { item: ReadingItem; language: 
       </div>
     </article>
   );
+}
+
+function ItemDetail({ item, language, onBack }: { item: ReadingItem; language: Settings["language"]; onBack: () => void }) {
+  return <section className="item-detail">
+    <div className="detail-toolbar">
+      <button className="secondary" onClick={onBack}>← {t(language, "content.back")}</button>
+      <a href={item.url} target="_blank" rel="noreferrer">{t(language, "content.source")} ↗</a>
+      {item.images?.some((image) => new URL(image.url).hostname === "pbs.twimg.com") && <button className="secondary" onClick={() => void sendMessage({ type: "OPEN_QUEUE", itemId: item.id, download: true })}>{t(language, "gallery.download")} · {item.images.length}</button>}
+    </div>
+    <h1>{item.title}</h1>
+    <p className="detail-meta">{item.content?.author || item.domain} · {new Date(item.createdAt).toLocaleDateString(language)} · {t(language, item.content?.kind === "selection" ? "content.selection" : "content.page")}</p>
+    {item.note && <p className="detail-note">{item.note}</p>}
+    {item.content && <SavedContent content={item.content} />}
+  </section>;
 }
 
 function SettingsPanel({
@@ -201,9 +220,12 @@ function SettingsPanel({
 function App() {
   const [items, setItems] = useState<ReadingItem[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [view, setView] = useState<QueueView>("unread");
+  const [view, setView] = useState<QueueView>("all");
   const [query, setQuery] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [showGallery, setShowGallery] = useState(location.hash === "#gallery");
+  const [selectedId, setSelectedId] = useState<string | null>(new URLSearchParams(location.search).get("item"));
+  const [downloadId, setDownloadId] = useState<string | null>(new URLSearchParams(location.search).get("download"));
   const [loading, setLoading] = useState(true);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -215,6 +237,7 @@ function App() {
 
   useEffect(() => {
     void reload();
+    history.replaceState(null, "", location.pathname);
     const listener = () => void reload();
     chrome.storage.onChanged.addListener(listener);
     return () => chrome.storage.onChanged.removeListener(listener);
@@ -229,14 +252,14 @@ function App() {
         || target instanceof HTMLTextAreaElement
         || target instanceof HTMLSelectElement
         || (target instanceof HTMLElement && target.isContentEditable);
-      if (showSettings || event.key !== "/" || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isEditing) return;
+      if (showSettings || showGallery || selectedId || event.key !== "/" || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isEditing) return;
       event.preventDefault();
       searchInputRef.current?.focus();
     }
 
     document.addEventListener("keydown", focusSearch);
     return () => document.removeEventListener("keydown", focusSearch);
-  }, [showSettings]);
+  }, [showSettings, showGallery, selectedId]);
 
   const visible = useMemo(() => {
     if (query.trim()) return searchItems(items, query, settings.sortOrder);
@@ -270,6 +293,7 @@ function App() {
 
   const unreadCount = items.filter((item) => stateOf(item) === "unread").length;
   const currentLabel = query.trim() ? t(settings.language, "queue.searchResults") : viewLabel(settings.language, view);
+  const selectedItem = items.find((item) => item.id === selectedId);
 
   return (
     <div className="shell">
@@ -277,9 +301,9 @@ function App() {
         <div className="brand"><img className="logo" src="/icon.png" alt="" /><div><strong>LinkPouch</strong><span>{t(settings.language, "queue.unreadCount", { count: unreadCount })}</span></div></div>
         <nav>{VIEWS.map((id) => {
           const count = itemsForView(items, id, settings.sortOrder).length;
-          return <button key={id} className={!showSettings && view === id ? "active" : ""} onClick={() => { setView(id); setShowSettings(false); }}><NavIcon view={id} /><span>{viewLabel(settings.language, id)}</span>{count > 0 && <em>{count}</em>}</button>;
-        })}</nav>
-        <button className={showSettings ? "settings-link active" : "settings-link"} onClick={() => setShowSettings(true)}><NavIcon view="settings" /><span>{t(settings.language, "settings.title")}</span></button>
+          return <button key={id} className={!showSettings && !showGallery && view === id ? "active" : ""} onClick={() => { setView(id); setShowSettings(false); setShowGallery(false); setSelectedId(null); setQuery(""); }}><NavIcon view={id} /><span>{viewLabel(settings.language, id)}</span>{count > 0 && <em>{count}</em>}</button>;
+        })}<button className={showGallery ? "active" : ""} onClick={() => { setShowGallery(true); setShowSettings(false); setSelectedId(null); }}><svg className="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="2" /><circle cx="7" cy="7" r="1" /><path d="m3 14 5-5 4 4 2-2 3 3" /></svg><span>{t(settings.language, "gallery.title")}</span></button></nav>
+        <button className={showSettings ? "settings-link active" : "settings-link"} onClick={() => { setShowSettings(true); setShowGallery(false); setSelectedId(null); }}><NavIcon view="settings" /><span>{t(settings.language, "settings.title")}</span></button>
       </aside>
       <main className="content">
         {showSettings ? <SettingsPanel settings={settings} items={items} onSave={async (next) => { localStorage.setItem("popupScale", String(next.popupScale)); await persistSettings(next); setSettings(next); }} onRestore={async (backup) => {
@@ -289,7 +313,7 @@ function App() {
             localStorage.setItem("popupScale", String(backup.settings.popupScale));
             setSettings(backup.settings);
           }
-        }} /> : <>
+        }} /> : showGallery ? <Gallery language={settings.language} pendingItem={items.find((item) => item.id === downloadId)} onDownloaded={() => setDownloadId(null)} /> : selectedItem ? <ItemDetail item={selectedItem} language={settings.language} onBack={() => setSelectedId(null)} /> : <>
           <header className="toolbar">
             <div><h1>{currentLabel}</h1></div>
             <div className="toolbar-actions">
@@ -301,7 +325,7 @@ function App() {
             </div>
           </header>
           <section className="list grouped-list" aria-busy={loading}>
-            {[...grouped.entries()].map(([label, groupItems]) => <section className="queue-group" key={label}><h2>{label}{view === "source" && <span>{groupItems.length}</span>}</h2>{groupItems.map((item) => <QueueItem key={item.id} item={item} language={settings.language} onChange={applyChange} />)}</section>)}
+            {[...grouped.entries()].map(([label, groupItems]) => <section className="queue-group" key={label}><h2>{label}{view === "source" && <span>{groupItems.length}</span>}</h2>{groupItems.map((item) => <QueueItem key={item.id} item={item} language={settings.language} onChange={applyChange} onPreview={(value) => setSelectedId(value.id)} />)}</section>)}
             {!loading && visible.length === 0 && <div className="empty"><div>✓</div><h2>{query ? t(settings.language, "queue.noResults") : view === "unread" ? t(settings.language, "queue.emptyUnread") : t(settings.language, "queue.emptyOther")}</h2><p>{query ? t(settings.language, "queue.tryAnotherQuery") : t(settings.language, "queue.emptyHelp")}</p></div>}
             {!loading && visible.length > 0 && <div className="item-count">{t(settings.language, "queue.itemCount", { count: visible.length })}</div>}
           </section>

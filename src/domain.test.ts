@@ -36,6 +36,28 @@ describe("reading queue domain", () => {
     expect(differentFragment.items).toHaveLength(2);
   });
 
+  it("keeps selections separate from each other and from the full page", () => {
+    const full = captureItem([], page, 10, "page");
+    const first = captureItem(full.items, {
+      ...page, content: { kind: "selection", html: "", text: "First translation" },
+    }, 20, "first");
+    const second = captureItem(first.items, {
+      ...page, content: { kind: "selection", html: "", text: "Second translation" },
+    }, 30, "second");
+    const recaptured = captureItem(second.items, page, 40, "unused");
+
+    expect(recaptured.items.map(({ id }) => id)).toEqual(["second", "first", "page"]);
+    expect(recaptured.items.find(({ id }) => id === "first")?.content?.text).toBe("First translation");
+    expect(recaptured.item.id).toBe("page");
+  });
+
+  it("finds saved body text even when the title does not contain the query", () => {
+    const saved = captureItem([], {
+      ...page, content: { kind: "page", html: "<p>向量检索</p>", text: "向量检索" },
+    }, 10, "body").item;
+    expect(searchItems([saved], "向量检索", "newest").map(({ id }) => id)).toEqual(["body"]);
+  });
+
   it("requeues a captured Done item", () => {
     const first = captureItem([], page, 10, "one").item;
     const done = markDone(first, 15);

@@ -1,10 +1,29 @@
 export type ItemState = "unread" | "done" | "trash";
-export type QueueView = "unread" | "today" | "week" | "source" | "done" | "trash";
+export type QueueView = "all" | "unread" | "today" | "week" | "source" | "done" | "trash";
 export type SortOrder = "newest" | "oldest";
 export type Theme = "system" | "light" | "dark";
 export type Language = "zh-CN" | "en";
 export type OpenBehavior = "allWindows" | "queueWindow" | "newTab";
 export type QueueOpenBehavior = "allWindows" | "currentWindow";
+
+export interface SavedContent {
+  kind: "page" | "selection";
+  html: string;
+  text: string;
+  author?: string;
+}
+
+export interface PageImage {
+  url: string;
+  alt: string;
+}
+
+export interface CapturedPage {
+  url: string;
+  title: string;
+  content?: SavedContent;
+  images?: PageImage[];
+}
 
 export interface ReadingItem {
   id: string;
@@ -16,6 +35,8 @@ export interface ReadingItem {
   queuedAt: number;
   doneAt: number | null;
   deletedAt: number | null;
+  content?: SavedContent;
+  images?: PageImage[];
 }
 
 export interface Settings {
@@ -57,12 +78,13 @@ export function stateOf(item: ReadingItem): ItemState {
 
 export function captureItem(
   items: ReadingItem[],
-  page: { url: string; title: string },
+  page: CapturedPage,
   now = Date.now(),
   id: string = crypto.randomUUID(),
 ): { items: ReadingItem[]; item: ReadingItem; outcome: "created" | "existing" | "restored" } {
   const url = normalizeUrl(page.url);
-  const existing = items.find((item) => item.url === url);
+  const existing = page.content?.kind === "selection" ? undefined
+    : items.find((item) => item.url === url && item.content?.kind !== "selection");
   if (!existing) {
     const item: ReadingItem = {
       id,
@@ -74,6 +96,8 @@ export function captureItem(
       queuedAt: now,
       doneAt: null,
       deletedAt: null,
+      content: page.content,
+      images: page.images,
     };
     return { items: [item, ...items], item, outcome: "created" };
   }
@@ -86,6 +110,8 @@ export function captureItem(
     queuedAt: now,
     doneAt: null,
     deletedAt: null,
+    content: page.content ?? existing.content,
+    images: page.images ?? existing.images,
   };
   return { items: items.map((candidate) => candidate.id === item.id ? item : candidate), item, outcome };
 }
@@ -127,6 +153,7 @@ function searchScore(item: ReadingItem, terms: string[]): number | null {
     const bestFieldScore = Math.max(
       fieldMatchScore(item.title, term, 100),
       fieldMatchScore(item.note, term, 60),
+      fieldMatchScore(item.content?.text ?? "", term, 50),
       fieldMatchScore(item.domain, term, 40),
       fieldMatchScore(item.url, term, 20),
     );
@@ -170,6 +197,7 @@ export function itemsForView(
 ): ReadingItem[] {
   let result = items.filter((item) => {
     const state = stateOf(item);
+    if (view === "all") return state !== "trash";
     if (view === "done") return state === "done";
     if (view === "trash") return state === "trash";
     if (state !== "unread") return false;

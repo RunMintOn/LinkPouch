@@ -55,7 +55,17 @@ async function createHarness(): Promise<Harness> {
 
   const fakeChrome = {
     storage: { local: storageArea(local), session: storageArea(session) },
+    scripting: { executeScript: vi.fn(async () => []) },
     tabs: {
+      sendMessage: vi.fn(async () => ({
+        ok: true,
+        page: {
+          url: tab.url,
+          title: tab.title,
+          content: { kind: "page", html: "<p>Saved article body</p>", text: "Saved article body" },
+          images: [],
+        },
+      })),
       query: vi.fn(async (query: chrome.tabs.QueryInfo) => {
         if (query.url) {
           return query.windowId === undefined || query.windowId === queueTab.windowId ? [queueTab] : [];
@@ -117,6 +127,7 @@ describe("background browser workflow", () => {
     expect(items[0]).toMatchObject({
       url: "https://www.example.com/story?from=test#intro",
       title: "Example story",
+      content: { kind: "page", text: "Saved article body" },
     });
     expect(harness.session.captureSession).toMatchObject({ itemId: expect.any(String), sourceTabId: 7 });
     expect(harness.openPopup).toHaveBeenCalledOnce();

@@ -1,5 +1,7 @@
 # Browser Reading Queue — Product Requirement Document
 
+> Historical V1 specification. The permanent-collection, saved-body, and image-capture boundaries are superseded by `CONTEXT.md` and `docs/adr/0001-local-content-collection.md`. Unrelated behaviors remain unchanged.
+
 ## Problem Statement
 
 用户在浏览器中阅读博客、文章、GitHub 项目、X/Twitter 内容及其他网页时，经常遇到“现在没时间看，但之后想回来读”的内容。
