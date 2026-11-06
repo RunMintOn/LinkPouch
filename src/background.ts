@@ -7,9 +7,11 @@ import {
   getItems,
   getSettings,
   setCaptureSession,
-  setItems,
+  updateItems,
   updateItem,
+  isItemStorageKey,
 } from "./repository";
+import { scheduleBackup } from "./automatic-backup";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -38,16 +40,17 @@ async function captureActiveTab(sourceTab?: chrome.tabs.Tab, intent: "capture" |
   } catch (error) {
     extractionError = errorMessage(error);
   }
-  const items = await getItems();
-  const result = captureItem(items, page, startedAt);
-  if (intent === "images") {
-    // Collecting images preserves the source without creating a reading task.
-    const previous = items.find((item) => item.id === result.item.id);
-    result.item.doneAt = previous ? previous.doneAt : startedAt;
-    result.item.deletedAt = previous?.deletedAt ?? null;
-    result.item.queuedAt = previous?.queuedAt ?? startedAt;
-  }
-  await setItems(result.items);
+  const result = await updateItems((items) => {
+    const captured = captureItem(items, page, startedAt);
+    if (intent === "images") {
+      // Collecting images preserves the source without creating a reading task.
+      const previous = items.find((item) => item.id === captured.item.id);
+      captured.item.doneAt = previous ? previous.doneAt : startedAt;
+      captured.item.deletedAt = previous?.deletedAt ?? null;
+      captured.item.queuedAt = previous?.queuedAt ?? startedAt;
+    }
+    return captured;
+  });
   const session: CaptureSession = {
     itemId: result.item.id,
     sourceTabId: tab.id,
@@ -163,3 +166,9 @@ chrome.runtime.onMessage.addListener((message: RuntimeMessage, sender, sendRespo
   void handleMessage(message, sender).then(sendResponse);
   return true;
 });
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "local" && (Object.keys(changes).some(isItemStorageKey)
+    || changes.settings || changes.localImages || changes.imageDirectoryId)) scheduleBackup();
+});
+chrome.runtime.onStartup.addListener(scheduleBackup);

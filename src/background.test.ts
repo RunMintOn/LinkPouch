@@ -1,5 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeMessage, RuntimeResponse } from "./messages";
+import { stubWebLocks } from "./test/web-locks";
+import { storageArea } from "./test/storage";
 
 interface Harness {
   local: Record<string, unknown>;
@@ -13,6 +15,7 @@ interface Harness {
 }
 
 async function createHarness(): Promise<Harness> {
+  stubWebLocks();
   const local: Record<string, unknown> = {};
   const session: Record<string, unknown> = {};
   const removedTabs: number[] = [];
@@ -45,16 +48,8 @@ async function createHarness(): Promise<Harness> {
   let messageListener: ((message: RuntimeMessage, sender: chrome.runtime.MessageSender, respond: (response: RuntimeResponse) => void) => boolean) | undefined;
   const openPopup = vi.fn(async () => undefined);
 
-  function storageArea(data: Record<string, unknown>) {
-    return {
-      get: vi.fn(async (key: string) => ({ [key]: data[key] })),
-      set: vi.fn(async (values: Record<string, unknown>) => { Object.assign(data, values); }),
-      remove: vi.fn(async (key: string) => { delete data[key]; }),
-    };
-  }
-
   const fakeChrome = {
-    storage: { local: storageArea(local), session: storageArea(session) },
+    storage: { local: storageArea(local), session: storageArea(session), onChanged: { addListener: vi.fn() } },
     scripting: { executeScript: vi.fn(async () => []) },
     tabs: {
       sendMessage: vi.fn(async () => ({
@@ -95,6 +90,7 @@ async function createHarness(): Promise<Harness> {
     runtime: {
       getURL: (path: string) => `chrome-extension://test/${path}`,
       onMessage: { addListener: vi.fn((listener: typeof messageListener) => { messageListener = listener; }) },
+      onStartup: { addListener: vi.fn() },
     },
   };
 
@@ -116,13 +112,14 @@ async function createHarness(): Promise<Harness> {
 }
 
 beforeEach(() => vi.resetModules());
+afterEach(() => vi.unstubAllGlobals());
 
 describe("background browser workflow", () => {
   it("persists the active page before opening Quick Capture", async () => {
     const harness = await createHarness();
     await harness.command("capture-current-page");
 
-    const items = harness.local.readingItems as Array<{ url: string; title: string }>;
+    const items = Object.entries(harness.local).filter(([key]) => key.startsWith("item:")).map(([, value]) => value);
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
       url: "https://www.example.com/story?from=test#intro",
@@ -206,12 +203,12 @@ describe("background browser workflow", () => {
     const harness = await createHarness();
     harness.local.settings = { closeAfterCapture: true };
     await harness.command("capture-current-page");
-    const item = (harness.local.readingItems as Array<{ id: string }>)[0];
+    const item = Object.entries(harness.local).find(([key]) => key.startsWith("item:"))![1] as { id: string };
 
     const response = await harness.message({ type: "CONFIRM_CAPTURE", itemId: item.id, note: "Read for project", sourceTabId: 7 });
 
     expect(response.ok).toBe(true);
     expect(harness.removedTabs).toEqual([7]);
-    expect((harness.local.readingItems as Array<{ note: string }>)[0].note).toBe("Read for project");
+    expect((harness.local[`item:${item.id}`] as { note: string }).note).toBe("Read for project");
   });
 });

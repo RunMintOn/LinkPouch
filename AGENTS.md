@@ -16,6 +16,10 @@ This is a single-context repo using root `CONTEXT.md` and `docs/adr/`. See `docs
 
 修改正文/选区采集、X 收图入口、目录读写、画廊或补采旧收藏时，先读 `docs/agents/content-capture.md`：复用来源、验证边界、一次性补采结果与账号风险。
 
+### 存储与恢复
+
+修改收藏持久化、数据迁移、备份恢复或读写性能时，先读 `docs/agents/storage-and-recovery.md`：写入约束、性能证据、回归前提与权限边界。
+
 ### 收藏浏览与布局
 
 修改内容墙、卡片间距或站内预览时，先读 `docs/agents/collection-browsing.md`：设计取舍、瀑布流占位踩坑、离线验证方法与原型归档。

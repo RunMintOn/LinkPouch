@@ -18,6 +18,17 @@ export interface PageImage {
   alt: string;
 }
 
+export interface LocalImage {
+  id: string;
+  directoryId: string;
+  fileName: string;
+  itemId: string;
+  sourceUrl: string;
+  title: string;
+  alt: string;
+  createdAt: number;
+}
+
 export interface CapturedPage {
   url: string;
   title: string;

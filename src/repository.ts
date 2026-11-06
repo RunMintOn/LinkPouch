@@ -1,33 +1,76 @@
-import { DEFAULT_SETTINGS, type ReadingItem, type Settings } from "./domain";
+import { DEFAULT_SETTINGS, type LocalImage, type ReadingItem, type Settings } from "./domain";
 import type { CaptureSession } from "./messages";
+import { createBackup, type BackupFile, type RestoredBackup } from "./backup";
+import { getDirectory, saveDirectory } from "./directories";
 
-const ITEMS_KEY = "readingItems";
+const ITEM_PREFIX = "item:";
 const SETTINGS_KEY = "settings";
 const CAPTURE_SESSION_KEY = "captureSession";
+let ready: Promise<void> | undefined;
 
-export async function getItems(): Promise<ReadingItem[]> {
-  const result = await chrome.storage.local.get(ITEMS_KEY);
-  return Array.isArray(result[ITEMS_KEY]) ? result[ITEMS_KEY] : [];
+// Web Locks coordinate the extension's pages and background worker, not just one tab.
+export function withStorageWrite<T>(write: () => Promise<T>): Promise<T> {
+  return navigator.locks.request("linkpouch-storage-write", write);
 }
 
-export async function setItems(items: ReadingItem[]): Promise<void> {
-  await chrome.storage.local.set({ [ITEMS_KEY]: items });
+export const isItemStorageKey = (key: string): boolean => key.startsWith(ITEM_PREFIX);
+
+function ensureItemStorage(): Promise<void> {
+  return ready ??= withStorageWrite(async () => {
+    const { itemsVersion, readingItems } = await chrome.storage.local.get(["itemsVersion", "readingItems"]);
+    if (itemsVersion === 2) {
+      if (readingItems !== undefined) await chrome.storage.local.remove("readingItems");
+      return;
+    }
+    const items: ReadingItem[] = Array.isArray(readingItems) ? readingItems : [];
+    await chrome.storage.local.set({
+      ...Object.fromEntries(items.map((item) => [ITEM_PREFIX + item.id, item])), itemsVersion: 2,
+    });
+    // Do not remove the legacy collection until the new records have been saved.
+    await chrome.storage.local.remove("readingItems");
+  }).catch((error) => { ready = undefined; throw error; });
+}
+
+async function readItems(): Promise<ReadingItem[]> {
+  const stored = await chrome.storage.local.get(null);
+  return Object.entries(stored).filter(([key]) => isItemStorageKey(key)).map(([, value]) => value as ReadingItem);
+}
+
+export async function getItems(): Promise<ReadingItem[]> {
+  await ensureItemStorage();
+  return readItems();
+}
+
+export async function updateItems<T extends { items: ReadingItem[] }>(update: (items: ReadingItem[]) => T): Promise<T> {
+  await ensureItemStorage();
+  return withStorageWrite(async () => {
+    const items = await readItems();
+    const result = update(items);
+    const previous = new Map(items.map((item) => [item.id, item]));
+    const nextIds = new Set(result.items.map((item) => item.id));
+    const changed = result.items.filter((item) => previous.get(item.id) !== item);
+    if (changed.length) await chrome.storage.local.set(Object.fromEntries(changed.map((item) => [ITEM_PREFIX + item.id, item])));
+    const removed = items.filter((item) => !nextIds.has(item.id)).map((item) => ITEM_PREFIX + item.id);
+    if (removed.length) await chrome.storage.local.remove(removed);
+    return result;
+  });
 }
 
 export async function updateItem(id: string, update: (item: ReadingItem) => ReadingItem): Promise<ReadingItem | undefined> {
-  const items = await getItems();
-  let changed: ReadingItem | undefined;
-  const next = items.map((item) => {
-    if (item.id !== id) return item;
-    changed = update(item);
+  await ensureItemStorage();
+  return withStorageWrite(async () => {
+    const key = ITEM_PREFIX + id;
+    const saved = (await chrome.storage.local.get(key))[key] as ReadingItem | undefined;
+    if (!saved) return undefined;
+    const changed = update(saved);
+    await chrome.storage.local.set({ [key]: changed });
     return changed;
   });
-  if (changed) await setItems(next);
-  return changed;
 }
 
 export async function removeItem(id: string): Promise<void> {
-  await setItems((await getItems()).filter((item) => item.id !== id));
+  await ensureItemStorage();
+  await withStorageWrite(() => chrome.storage.local.remove(ITEM_PREFIX + id));
 }
 
 export async function getSettings(): Promise<Settings> {
@@ -56,13 +99,38 @@ export async function getSettings(): Promise<Settings> {
 }
 
 export async function setSettings(settings: Settings): Promise<void> {
-  await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
+  await withStorageWrite(() => chrome.storage.local.set({ [SETTINGS_KEY]: settings }));
 }
 
-export async function restoreBackup(items: ReadingItem[], settings: Settings | undefined): Promise<void> {
-  await chrome.storage.local.set({
-    [ITEMS_KEY]: items,
-    ...(settings === undefined ? {} : { [SETTINGS_KEY]: settings }),
+export async function restoreBackup(items: ReadingItem[], settings: Settings | undefined,
+  images: Pick<RestoredBackup, "localImages" | "imageDirectoryId"> = {}): Promise<void> {
+  await ensureItemStorage();
+  await withStorageWrite(async () => {
+    const previous = await readItems();
+    const nextIds = new Set(items.map((item) => item.id));
+    const directory = images.imageDirectoryId === undefined ? undefined : await getDirectory("images");
+    await chrome.storage.local.set({
+      ...Object.fromEntries(items.map((item) => [ITEM_PREFIX + item.id, item])),
+      ...(settings === undefined ? {} : { [SETTINGS_KEY]: settings }),
+      ...(images.localImages === undefined ? {} : { localImages: images.localImages }),
+      ...(images.imageDirectoryId === undefined ? {} : { imageDirectoryId: images.imageDirectoryId }),
+    });
+    const removed = previous.filter((item) => !nextIds.has(item.id)).map((item) => ITEM_PREFIX + item.id);
+    if (removed.length) await chrome.storage.local.remove(removed);
+    if (directory && directory.id !== images.imageDirectoryId) await saveDirectory("images", undefined);
+  });
+}
+
+export async function getBackup(): Promise<BackupFile> {
+  await ensureItemStorage();
+  return withStorageWrite(async () => {
+    const [items, settings, stored, directory] = await Promise.all([
+      readItems(), getSettings(), chrome.storage.local.get(["localImages", "imageDirectoryId"]), getDirectory("images"),
+    ]);
+    return createBackup(items, settings, {
+      localImages: (stored.localImages ?? []) as LocalImage[],
+      imageDirectoryId: directory?.id ?? (typeof stored.imageDirectoryId === "string" ? stored.imageDirectoryId : undefined),
+    });
   });
 }
 

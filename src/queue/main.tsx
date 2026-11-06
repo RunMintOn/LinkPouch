@@ -13,17 +13,29 @@ import {
   type ReadingItem,
   type Settings,
 } from "../domain";
-import { createBackup, parseBackup, type RestoredBackup } from "../backup";
+import { parseBackup, type RestoredBackup } from "../backup";
 import { t, viewLabel } from "../i18n";
 import { sendMessage } from "../chrome";
-import { getItems, getSettings, removeItem, restoreBackup, setItems as persistItems, setSettings as persistSettings, updateItem } from "../repository";
+import { getBackup, getItems, getSettings, isItemStorageKey, removeItem, restoreBackup, setSettings as persistSettings, updateItem } from "../repository";
 import { applyTheme } from "../theme";
 import { isImeInput } from "../popup/ime";
 import { SavedContent } from "../SavedContent";
 import { Gallery } from "./Gallery";
+import { AutomaticBackup } from "./AutomaticBackup";
+import { getBackupStatus, type BackupStatus } from "../automatic-backup";
 import "./queue.css";
 
 const VIEWS: QueueView[] = ["all", "unread", "today", "week", "source", "done", "trash"];
+
+function applyItemChanges(items: ReadingItem[], changes: Record<string, chrome.storage.StorageChange>): ReadingItem[] {
+  const next = new Map(items.map((item) => [item.id, item]));
+  for (const [key, change] of Object.entries(changes)) {
+    const saved = change.newValue as ReadingItem | undefined;
+    if (saved) next.set(saved.id, saved);
+    else next.delete(key.slice("item:".length));
+  }
+  return [...next.values()];
+}
 
 function isEditingTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
@@ -82,7 +94,7 @@ function CardImage({ image, count }: { image: NonNullable<ReadingItem["images"]>
   </div>;
 }
 
-function QueueItem({ item, language, selected, searchActive, onChange, onPreview }: { item: ReadingItem; language: Settings["language"]; selected: boolean; searchActive: boolean; onChange: (next: ReadingItem | null) => void; onPreview: (item: ReadingItem) => void }) {
+function QueueItem({ item, language, selected, searchActive, onPreview }: { item: ReadingItem; language: Settings["language"]; selected: boolean; searchActive: boolean; onPreview: (item: ReadingItem) => void }) {
   const state = stateOf(item);
   const cardRef = useRef<HTMLElement>(null);
 
@@ -97,10 +109,7 @@ function QueueItem({ item, language, selected, searchActive, onChange, onPreview
   }, []);
 
   async function update(transform: (value: ReadingItem) => ReadingItem) {
-    const all = await getItems();
-    const nextItem = transform(item);
-    await persistItems(all.map((candidate) => candidate.id === item.id ? nextItem : candidate));
-    onChange(nextItem);
+    await updateItem(item.id, transform);
   }
 
   return (
@@ -131,7 +140,7 @@ function QueueItem({ item, language, selected, searchActive, onChange, onPreview
           {state === "trash" ? <>
             <button onClick={() => void update(restoreFromTrash)}>{t(language, "queue.restore")}</button>
             <button className="danger" onClick={() => {
-              if (window.confirm(t(language, "queue.deleteForeverConfirm"))) void removeItem(item.id).then(() => onChange(null));
+              if (window.confirm(t(language, "queue.deleteForeverConfirm"))) void removeItem(item.id);
             }}>{t(language, "queue.deleteForever")}</button>
           </> : <button onClick={() => void update(moveToTrash)}>{t(language, "queue.delete")}</button>}
         </div>
@@ -244,13 +253,17 @@ function SettingsPanel({
     setDirty(false);
   }
 
-  function downloadBackup() {
-    const data = JSON.stringify(createBackup(items, settings), null, 2);
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(new Blob([data], { type: "application/json" }));
-    link.download = `linkpouch-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    link.click();
-    URL.revokeObjectURL(link.href);
+  async function downloadBackup() {
+    try {
+      const data = JSON.stringify(await getBackup(), null, 2);
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(new Blob([data], { type: "application/json" }));
+      link.download = `linkpouch-backup-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+    } catch {
+      setRestoreStatus(t(language, "settings.exportError"));
+    }
   }
 
   async function restore(file: File) {
@@ -294,7 +307,8 @@ function SettingsPanel({
       </div>
       <div className="settings-card">
         <h2>{t(language, "settings.backupRestore")}</h2>
-        <div className="backup-row"><div><strong>{t(language, "settings.exportBackup")}</strong><small>{t(language, "settings.backupHelp")}</small></div><button className="secondary" type="button" onClick={downloadBackup}>{t(language, "settings.exportBackup")}</button></div>
+        <AutomaticBackup language={language} />
+        <div className="backup-row"><div><strong>{t(language, "settings.exportBackup")}</strong><small>{t(language, "settings.backupHelp")}</small></div><button className="secondary" type="button" onClick={() => void downloadBackup()}>{t(language, "settings.exportBackup")}</button></div>
         <div className="backup-row"><div><strong>{t(language, "settings.restoreBackup")}</strong><small>{t(language, "settings.restoreHelp")}</small></div><button className="secondary" type="button" onClick={() => fileInputRef.current?.click()}>{t(language, "settings.restoreBackup")}</button><input ref={fileInputRef} className="file-input" type="file" accept="application/json,.json" onChange={(event) => {
           const file = event.currentTarget.files?.[0];
           event.currentTarget.value = "";
@@ -319,19 +333,28 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(route.get("item"));
   const [downloadId, setDownloadId] = useState<string | null>(route.get("download"));
   const [loading, setLoading] = useState(true);
+  const [backupError, setBackupError] = useState(false);
+  const [renderLimit, setRenderLimit] = useState(100);
+  const moreRef = useRef<HTMLButtonElement>(null);
+  const scrollResult = useRef<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const previewOrigin = useRef<HTMLElement | null>(null);
   const composing = useRef(false);
   const itemSaveQueue = useRef<Promise<void>>(Promise.resolve());
+  const pendingChanges = useRef<Record<string, chrome.storage.StorageChange> | null>({});
 
   async function reload() {
     const [nextItems, nextSettings] = await Promise.all([getItems(), getSettings()]);
     localStorage.setItem("popupScale", String(nextSettings.popupScale));
-    setItems(nextItems); setSettings(nextSettings); setLoading(false);
+    // Changes received while the initial snapshot was loading must win over it.
+    setItems(applyItemChanges(nextItems, pendingChanges.current ?? {}));
+    pendingChanges.current = null;
+    setSettings(nextSettings); setLoading(false);
   }
 
   useEffect(() => {
     void reload();
+    void getBackupStatus().then((status) => setBackupError(!!status.error));
     history.replaceState(null, "", location.pathname);
     const navigate = () => {
       const next = new URLSearchParams(location.hash.slice(1));
@@ -342,7 +365,20 @@ function App() {
       setDownloadId(next.get("download"));
       history.replaceState(null, "", location.pathname);
     };
-    const listener = () => void reload();
+    const listener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area !== "local") return;
+      if (changes.backupStatus) setBackupError(!!(changes.backupStatus.newValue as BackupStatus | undefined)?.error);
+      const entries = Object.entries(changes).filter(([key]) => isItemStorageKey(key));
+      if (entries.length) {
+        const itemChanges = Object.fromEntries(entries);
+        if (pendingChanges.current) Object.assign(pendingChanges.current, itemChanges);
+        else setItems((current) => applyItemChanges(current, itemChanges));
+      }
+      if (changes.settings) void getSettings().then((next) => {
+        localStorage.setItem("popupScale", String(next.popupScale));
+        setSettings(next);
+      });
+    };
     chrome.storage.onChanged.addListener(listener);
     window.addEventListener("hashchange", navigate);
     return () => {
@@ -383,6 +419,32 @@ function App() {
     }, new Map<string, ReadingItem[]>());
   }, [visible, view, query, settings.language]);
 
+  const displayedGroups = useMemo(() => {
+    let remaining = renderLimit;
+    const groups = new Map<string, ReadingItem[]>();
+    for (const [label, group] of grouped) {
+      if (remaining <= 0) break;
+      groups.set(label, group.slice(0, remaining));
+      remaining -= group.length;
+    }
+    return groups;
+  }, [grouped, renderLimit]);
+
+  useEffect(() => setRenderLimit(100), [query, view, settings.sortOrder]);
+  useEffect(() => {
+    if (!moreRef.current) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) setRenderLimit((count) => Math.min(visible.length, count + 100));
+    }, { rootMargin: "600px" });
+    observer.observe(moreRef.current);
+    return () => observer.disconnect();
+  }, [renderLimit, visible.length, showSettings, showGallery]);
+  useEffect(() => {
+    if (!scrollResult.current) return;
+    document.getElementById(`queue-card-${scrollResult.current}`)?.scrollIntoView({ block: "nearest" });
+    scrollResult.current = null;
+  }, [activeResultId, renderLimit]);
+
   function openPreview(item: ReadingItem) {
     const origin = document.activeElement as HTMLElement;
     previewOrigin.current = origin === searchInputRef.current || origin.matches(":focus-visible") ? origin : null;
@@ -412,9 +474,11 @@ function App() {
     } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !event.shiftKey && ordered.length) {
       event.preventDefault();
       const index = ordered.findIndex((item) => item.id === activeResultId);
-      const next = ordered[Math.max(0, Math.min(ordered.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))];
+      const nextIndex = Math.max(0, Math.min(ordered.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)));
+      const next = ordered[nextIndex];
+      setRenderLimit((count) => Math.max(count, nextIndex + 1));
+      scrollResult.current = next.id;
       setActiveResultId(next.id);
-      document.getElementById(`queue-card-${next.id}`)!.scrollIntoView({ block: "nearest" });
     } else if (event.key === "Enter" && ordered.length) {
       event.preventDefault();
       openPreview(ordered.find((item) => item.id === activeResultId) ?? ordered[0]);
@@ -440,6 +504,7 @@ function App() {
         const index = ordered.findIndex((item) => item.id === selectedId);
         const next = index >= 0 ? ordered[index + (event.key === "ArrowRight" ? 1 : -1)] : undefined;
         if (next) {
+          setRenderLimit((count) => Math.max(count, index + 2));
           setSelectedId(next.id);
           setActiveResultId(next.id);
         }
@@ -449,17 +514,11 @@ function App() {
     return () => document.removeEventListener("keydown", navigate);
   }, [showSettings, showGallery, selectedId, grouped]);
 
-  function applyChange(next: ReadingItem | null) {
-    if (!next) return void reload();
-    setItems((current) => current.map((item) => item.id === next.id ? next : item));
-  }
-
   function saveItem(id: string, fields: Partial<Pick<ReadingItem, "title" | "note">>): Promise<void> {
     // Keep writes ordered, including when the preview closes or switches items.
     const save = itemSaveQueue.current.then(async () => {
       const next = await updateItem(id, (item) => ({ ...item, ...fields }));
       if (!next) throw new Error("Reading item not found");
-      applyChange(next);
     });
     itemSaveQueue.current = save.catch(() => {});
     return save;
@@ -477,12 +536,11 @@ function App() {
           const count = itemsForView(items, id, settings.sortOrder).length;
           return <button key={id} className={!showSettings && !showGallery && view === id ? "active" : ""} onClick={() => { setView(id); setShowSettings(false); setShowGallery(false); setSelectedId(null); changeQuery(""); }}><NavIcon view={id} /><span>{viewLabel(settings.language, id)}</span>{count > 0 && <em>{count}</em>}</button>;
         })}<button className={showGallery ? "active" : ""} onClick={() => { setShowGallery(true); setShowSettings(false); setSelectedId(null); }}><svg className="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="2" /><circle cx="7" cy="7" r="1" /><path d="m3 14 5-5 4 4 2-2 3 3" /></svg><span>{t(settings.language, "gallery.title")}</span></button></nav>
-        <button className={showSettings ? "settings-link active" : "settings-link"} onClick={() => { setShowSettings(true); setShowGallery(false); setSelectedId(null); }}><NavIcon view="settings" /><span>{t(settings.language, "settings.title")}</span></button>
+        <button className={showSettings ? "settings-link active" : "settings-link"} onClick={() => { setShowSettings(true); setShowGallery(false); setSelectedId(null); }}><NavIcon view="settings" /><span>{t(settings.language, "settings.title")}{backupError && ` · ${t(settings.language, "settings.backupPaused")}`}</span></button>
       </aside>
       <main className="content">
         {showSettings ? <SettingsPanel settings={settings} items={items} onSave={async (next) => { localStorage.setItem("popupScale", String(next.popupScale)); await persistSettings(next); setSettings(next); }} onRestore={async (backup) => {
-          await restoreBackup(backup.items, backup.settings);
-          setItems(backup.items);
+          await restoreBackup(backup.items, backup.settings, backup);
           if (backup.settings) {
             localStorage.setItem("popupScale", String(backup.settings.popupScale));
             setSettings(backup.settings);
@@ -505,12 +563,13 @@ function App() {
             </div>
           </header>
           <section id="collection-results" className="list grouped-list" aria-busy={loading}>
-            {[...grouped.entries()].map(([label, groupItems]) => <section className="queue-group" key={label}>
-              {label && <h2>{label}{view === "source" && <span>{groupItems.length}</span>}</h2>}
+            {[...displayedGroups.entries()].map(([label, groupItems]) => <section className="queue-group" key={label}>
+              {label && <h2>{label}{view === "source" && <span>{grouped.get(label)!.length}</span>}</h2>}
               <div className="card-grid">
-                {groupItems.map((item) => <QueueItem key={item.id} item={item} language={settings.language} selected={item.id === selectedId} searchActive={searchFocused && item.id === activeResultId} onChange={applyChange} onPreview={openPreview} />)}
+                {groupItems.map((item) => <QueueItem key={item.id} item={item} language={settings.language} selected={item.id === selectedId} searchActive={searchFocused && item.id === activeResultId} onPreview={openPreview} />)}
               </div>
             </section>)}
+            {renderLimit < visible.length && <button ref={moreRef} className="secondary" onClick={() => setRenderLimit((count) => count + 100)}>{t(settings.language, "queue.showMore")}</button>}
             {!loading && visible.length === 0 && <div className="empty"><div>✓</div><h2>{query ? t(settings.language, "queue.noResults") : view === "unread" ? t(settings.language, "queue.emptyUnread") : t(settings.language, "queue.emptyOther")}</h2><p>{query ? t(settings.language, "queue.tryAnotherQuery") : t(settings.language, "queue.emptyHelp")}</p></div>}
             {!loading && visible.length > 0 && <div className="item-count">{t(settings.language, "queue.itemCount", { count: visible.length })}</div>}
           </section>

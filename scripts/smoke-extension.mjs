@@ -21,6 +21,10 @@ const context = await chromium.launchPersistentContext(profile, {
 });
 const errors = [];
 context.on("page", (page) => page.on("pageerror", (error) => errors.push(error.message)));
+await context.addInitScript(() => {
+  window.readCollection = async () => Object.entries(await chrome.storage.local.get(null))
+    .filter(([key]) => key.startsWith("item:")).map(([, item]) => item);
+});
 
 const paragraphs = [
   "第一段译文：我保存的是有价值的内容，而不是为了清空阅读队列。",
@@ -82,7 +86,7 @@ try {
     assert.equal(clip.item.content.kind, "selection");
     assert.equal(clip.item.content.text, paragraphs[index]);
   }
-  assert.equal((await collection.evaluate(() => chrome.storage.local.get("readingItems"))).readingItems.length, 3);
+  assert.equal((await collection.evaluate(() => window.readCollection())).length, 3);
   console.log("PASS: two selections at the same URL remain independent");
 
   await collection.bringToFront();
@@ -98,7 +102,7 @@ try {
   assert.equal(context.pages().length, tabCount);
   const noteInput = collection.getByRole("textbox", { name: "阅读备注" });
   const waitForNote = (note) => collection.waitForFunction(async ({ id, note }) => {
-    const { readingItems } = await chrome.storage.local.get("readingItems");
+    const readingItems = await window.readCollection();
     return readingItems.find((item) => item.id === id)?.note === note;
   }, { id: full.item.id, note });
   assert.equal(await noteInput.inputValue(), "");
@@ -129,7 +133,7 @@ try {
   await collection.locator(".card-preview").click();
   assert.equal(await noteInput.inputValue(), "");
   const afterNote = await collection.evaluate(async (id) => {
-    const { readingItems } = await chrome.storage.local.get("readingItems");
+    const readingItems = await window.readCollection();
     return readingItems.find((item) => item.id === id);
   }, full.item.id);
   assert.deepEqual(afterNote, full.item);
@@ -147,7 +151,7 @@ try {
   await collection.getByRole("heading", { name: "搜索结果", exact: true }).click();
   await collection.locator(".item-detail").waitFor({ state: "detached" });
   await collection.waitForFunction(async (id) => {
-    const { readingItems } = await chrome.storage.local.get("readingItems");
+    const readingItems = await window.readCollection();
     return readingItems.find((item) => item.id === id)?.title === "我的简短标题";
   }, full.item.id);
   await collection.reload();
@@ -253,6 +257,93 @@ try {
   console.log("PASS: popup previews the actual saved body");
   await popup.close();
 
+  // Keep one write in flight while another page changes the reading state and
+  // the background confirms a note. The final record must retain all three.
+  const secondCollection = await context.newPage();
+  await secondCollection.goto(`${root}/queue.html`);
+  const concurrentCard = secondCollection.locator(".queue-item").filter({ hasText: "我的简短标题" });
+  await concurrentCard.waitFor();
+  await collection.getByRole("button", { name: "查看内容: 我的简短标题", exact: true }).click();
+  await collection.getByRole("button", { name: "编辑标题" }).click();
+  await collection.evaluate((itemId) => {
+    window.storageTestSet = chrome.storage.local.set.bind(chrome.storage.local);
+    chrome.storage.local.set = async (values) => {
+      if (!window.storageTestBlocked && Object.values(values).some((item) => item?.id === itemId && item.title === "并发写入后的标题")) {
+        window.storageTestBlocked = true;
+        await new Promise((resolve) => { window.storageTestRelease = resolve; });
+      }
+      const result = await window.storageTestSet(values);
+      window.storageTestTitlePersisted = true;
+      return result;
+    };
+  }, full.item.id);
+  await collection.getByRole("textbox", { name: "收藏标题" }).fill("并发写入后的标题");
+  await collection.waitForFunction(() => window.storageTestBlocked);
+  await concurrentCard.locator(".check").click();
+  await collection.evaluate((itemId) => {
+    window.storageTestBackground = chrome.runtime.sendMessage({
+      type: "CONFIRM_CAPTURE", itemId, note: "后台确认的备注",
+    }).then((response) => {
+      window.storageTestBackgroundSettled = true;
+      return response;
+    });
+  }, full.item.id);
+  await collection.waitForFunction(async (itemId) => {
+    const { pending } = await navigator.locks.query();
+    const readingItems = await window.readCollection();
+    const stateSaved = readingItems.find((item) => item.id === itemId).doneAt !== null;
+    // Before the fix, other writes can finish; afterwards they wait for the
+    // held write. Either schedule is allowed, but no successful edit may vanish.
+    return pending.length + Number(stateSaved) >= 2
+      || window.storageTestBackgroundSettled;
+  }, full.item.id);
+  await collection.evaluate(() => window.storageTestRelease());
+  await collection.waitForFunction(() => window.storageTestTitlePersisted);
+  const confirmed = await collection.evaluate(() => window.storageTestBackground);
+  assert.equal(confirmed.ok, true);
+  const concurrentItem = await collection.evaluate(async (id) => {
+    const readingItems = await window.readCollection();
+    return readingItems.find((item) => item.id === id);
+  }, full.item.id);
+  assert.equal(concurrentItem.title, "并发写入后的标题");
+  assert.equal(concurrentItem.note, "后台确认的备注");
+  assert.ok(concurrentItem.doneAt, "a concurrent title/note save must not undo marking Done");
+  await collection.evaluate(async (itemId) => {
+    chrome.storage.local.set = window.storageTestSet;
+    const readingItems = await window.readCollection();
+    const item = readingItems.find((item) => item.id === itemId);
+    await chrome.storage.local.set({ [`item:${itemId}`]: { ...item, title: "我的简短标题", note: "", doneAt: null } });
+  }, full.item.id);
+  await secondCollection.close();
+  await collection.reload();
+  await collection.locator(".queue-item").first().waitFor();
+  console.log("PASS: overlapping title edit, second-page Done action, and background note confirmation preserve every change");
+
+  const irrelevantReads = await collection.evaluate(async () => {
+    const originalGet = chrome.storage.local.get.bind(chrome.storage.local);
+    const reads = [];
+    chrome.storage.local.get = (...args) => { reads.push(args[0]); return originalGet(...args); };
+    try {
+      for (const [area, key, value] of [["session", "storageSmoke", true], ["local", "localImages", []]]) {
+        const changed = new Promise((resolve) => {
+          const listener = (changes, changedArea) => {
+            if (changedArea !== area || !changes[key]) return;
+            chrome.storage.onChanged.removeListener(listener);
+            resolve();
+          };
+          chrome.storage.onChanged.addListener(listener);
+        });
+        await chrome.storage[area].set({ [key]: value });
+        await changed;
+      }
+      return reads;
+    } finally {
+      chrome.storage.local.get = originalGet;
+    }
+  });
+  assert.deepEqual(irrelevantReads, [], "session and image-index changes must not reload the collection");
+  console.log("PASS: unrelated session/image-index changes do not reload the collection");
+
   // Use a native directory handle from OPFS to exercise read/write and persisted
   // handles headlessly. The external-directory picker itself is not automated.
   await collection.evaluate(async () => {
@@ -303,7 +394,8 @@ try {
   assert.ok(stored.files.every((file) => file.size === png.length));
   assert.equal(stored.local.localImages.length, 2);
   assert.ok(stored.local.localImages.every((image) => !("blob" in image) && !("data" in image)));
-  const savedPost = stored.local.readingItems.find((item) => item.url.includes("/status/1001"));
+  const savedPost = Object.entries(stored.local).filter(([key]) => key.startsWith("item:"))
+    .map(([, item]) => item).find((item) => item.url.includes("/status/1001"));
   assert.ok(savedPost.doneAt);
   assert.ok(!savedPost.content.text.includes("这条评论"));
   assert.equal(downloadedUrls.filter((url) => url.includes("name=orig")).length, 2);
@@ -328,11 +420,10 @@ try {
   console.log("PASS: consecutive downloads reuse the live collection document and directory handle");
 
   await collection.evaluate(async (item) => {
-    const { readingItems } = await chrome.storage.local.get("readingItems");
-    await chrome.storage.local.set({ readingItems: [...readingItems, {
+    await chrome.storage.local.set({ "item:tall-fixture": {
       ...item, id: "tall-fixture", title: "长图裁切预览", content: undefined,
       images: [{ url: "https://pbs.twimg.com/media/tall-fixture", alt: "完整长图" }],
-    }] });
+    } });
   }, full.item);
   await collection.getByRole("button", { name: "全部收藏", exact: false }).click();
   const tallCard = collection.locator(".queue-item").filter({ hasText: "长图裁切预览" });

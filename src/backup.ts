@@ -1,4 +1,4 @@
-import { DEFAULT_SETTINGS, type ReadingItem, type Settings } from "./domain";
+import { DEFAULT_SETTINGS, type LocalImage, type ReadingItem, type Settings } from "./domain";
 
 export const BACKUP_FORMAT = "linkpouch-backup-v1";
 const RECOVERY_FORMAT = "linkpouch-recovery-v1";
@@ -8,15 +8,25 @@ export interface BackupFile {
   exportedAt: string;
   readingItems: ReadingItem[];
   settings: Settings;
+  localImages: LocalImage[];
+  imageDirectoryId?: string;
 }
 
 export interface RestoredBackup {
   items: ReadingItem[];
   settings: Settings | undefined;
+  localImages?: LocalImage[];
+  imageDirectoryId?: string;
 }
 
-export function createBackup(items: ReadingItem[], settings: Settings, exportedAt = new Date().toISOString()): BackupFile {
-  return { format: BACKUP_FORMAT, exportedAt, readingItems: items, settings };
+export function createBackup(items: ReadingItem[], settings: Settings, options: {
+  exportedAt?: string; localImages?: LocalImage[]; imageDirectoryId?: string;
+} = {}): BackupFile {
+  return {
+    format: BACKUP_FORMAT, exportedAt: options.exportedAt ?? new Date().toISOString(),
+    readingItems: items, settings, localImages: options.localImages ?? [],
+    ...(options.imageDirectoryId === undefined ? {} : { imageDirectoryId: options.imageDirectoryId }),
+  };
 }
 
 export function parseBackup(text: string): RestoredBackup {
@@ -36,10 +46,19 @@ export function parseBackup(text: string): RestoredBackup {
     throw new Error("无效的备份文件");
   }
 
-  if (value.settings === undefined) return { items, settings: undefined };
-  const settings = parseSettings(value.settings);
-  if (!settings) throw new Error("无效的备份文件");
-  return { items, settings };
+  const settings = value.settings === undefined ? undefined : parseSettings(value.settings);
+  if (value.settings !== undefined && !settings) throw new Error("无效的备份文件");
+  if (value.localImages !== undefined && (!Array.isArray(value.localImages)
+    || !value.localImages.every(isLocalImage)
+    || new Set(value.localImages.map((image) => image.id)).size !== value.localImages.length)) {
+    throw new Error("无效的备份文件");
+  }
+  if (value.imageDirectoryId !== undefined && typeof value.imageDirectoryId !== "string") throw new Error("无效的备份文件");
+  return {
+    items, settings,
+    ...(value.localImages === undefined ? {} : { localImages: value.localImages as LocalImage[] }),
+    ...(value.imageDirectoryId === undefined ? {} : { imageDirectoryId: value.imageDirectoryId }),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -56,7 +75,23 @@ function isReadingItem(value: unknown): value is ReadingItem {
     && isTimestamp(value.createdAt)
     && isTimestamp(value.queuedAt)
     && isOptionalTimestamp(value.doneAt)
-    && isOptionalTimestamp(value.deletedAt);
+    && isOptionalTimestamp(value.deletedAt)
+    && (value.content === undefined || (isRecord(value.content)
+      && (value.content.kind === "page" || value.content.kind === "selection")
+      && typeof value.content.html === "string" && typeof value.content.text === "string"
+      && (value.content.author === undefined || typeof value.content.author === "string")))
+    && (value.images === undefined || (Array.isArray(value.images) && value.images.every((image: unknown) =>
+      isRecord(image) && typeof image.url === "string" && URL.canParse(image.url) && typeof image.alt === "string")));
+}
+
+function isWebUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try { return ["http:", "https:"].includes(new URL(value).protocol); } catch { return false; }
+}
+
+function isLocalImage(value: unknown): value is LocalImage {
+  return isRecord(value) && ["id", "directoryId", "fileName", "itemId", "title", "alt"].every((key) => typeof value[key] === "string")
+    && isWebUrl(value.sourceUrl) && isTimestamp(value.createdAt);
 }
 
 function parseSettings(value: unknown): Settings | undefined {

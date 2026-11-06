@@ -16,7 +16,7 @@ A local-first Chromium extension for collecting page content, text selections, a
 4. Select **Load unpacked** and choose the extracted `LinkPouch` folder.
 5. Open `chrome://extensions/shortcuts` if Chrome did not assign the suggested shortcuts.
 
-To update, download and extract the next release, then select **Reload** for LinkPouch on `chrome://extensions`.
+To update, replace the files in the existing extension folder with the next release, then select **Reload** for LinkPouch on `chrome://extensions` and refresh open collection pages. Keep the same folder and installation rather than uninstalling or loading a second copy, so the extension keeps its local data.
 
 ## Development
 
@@ -52,6 +52,8 @@ The collection opens as a masonry wall of images, text, and notes, grouped by To
 
 Keyboard browsing: `/` focuses search and selects its text, including from a preview when not editing. In search, Up/Down selects a result and Enter opens it. The preview starts in reading mode: Up/Down and Page Up/Down scroll its content, while Left/Right moves through the current results. Escape leaves title/note editing first, then closes the preview and returns focus to its entry point. In search, Escape clears the query without leaving the field; another Escape leaves an empty search. Text editing and IME composition keep their normal keys.
 
+The wall initially renders 100 items and loads another batch near the bottom. Search and keyboard navigation still cover the entire collection, including items not rendered yet.
+
 ## Collect images
 
 On an X/Twitter post detail page, hover over the image group to reveal **↓ 收图 · N** in its top-right corner, or focus it with the keyboard. Click it to collect the post's images. You can also use **Download images** in Quick Capture or the saved-content view.
@@ -60,4 +62,21 @@ The first download opens Gallery and asks you to choose an image directory. Imag
 
 Saving a page's body does **not** automatically download its images. Embedded remote images may still depend on the original website.
 
-Bodies, notes, and image/source metadata stay in `chrome.storage.local`; the authorized directory handle is kept in IndexedDB. The image directory is not a complete backup of the collection. Existing manual JSON export/restore does not include image files. There is no LinkPouch backend.
+Bodies, notes, and image/source metadata stay in `chrome.storage.local`; authorized directory handles are kept in IndexedDB. Each reading item has its own storage key. Existing collections migrate automatically on first use, retaining the old array until the new records have been saved. There is no LinkPouch backend.
+
+## Backup & recovery
+
+In **Settings → Backup & restore**, choose a backup folder once. Changes are backed up automatically after a short delay, and browser startup catches up on saved changes. Up to seven JSON files rotate by weekday; this is not unlimited version history. If permission expires or a write fails, **Backup paused** appears beside Settings. Reauthorize or choose another folder there.
+
+Manual export and automatic backups include all saved items, settings, and the collected-image source index. Image files are **not** copied: keep the original image folder separately. Restore the JSON in Settings, then reselect the original image folder in Gallery to reconnect existing files. Old JSON backups remain importable; they cannot recover image sources they never contained.
+
+Backups require a successfully authorized, writable folder. A backup on the same disk does not protect against disk failure or loss of the computer.
+
+After building, the isolated headless checks are:
+
+```bash
+node scripts/smoke-extension.mjs
+node scripts/smoke-storage.mjs
+```
+
+They reuse the existing Playwright environment described in `docs/agents/content-capture.md`; they do not operate the user's browser. Storage checks use native OPFS handles in place of the system folder picker.
