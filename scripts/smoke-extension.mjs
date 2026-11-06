@@ -45,6 +45,10 @@ await context.route("https://x.com/**", (route) => route.fulfill({
   contentType: "text/html; charset=utf-8", body: route.request().url().includes("/status/") ? xPost : article,
 }));
 await context.route("https://pbs.twimg.com/**", (route) => {
+  if (route.request().url().includes("tall-fixture")) return route.fulfill({
+    contentType: "image/svg+xml",
+    body: '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="1600"><rect width="240" height="1600" fill="#537a68"/><path d="M0 160H240M0 320H240M0 480H240" stroke="#e9e0bc" stroke-width="12"/><text x="20" y="80" fill="white" font-size="32">TOP</text><text x="20" y="1550" fill="white" font-size="32">BOTTOM</text></svg>',
+  });
   downloadedUrls.push(route.request().url());
   return route.fulfill({ contentType: "image/png", body: png });
 });
@@ -92,11 +96,133 @@ try {
   await collection.locator(".saved-content").waitFor();
   assert.deepEqual(await collection.locator(".queue-item").boundingBox(), cardBounds);
   assert.equal(context.pages().length, tabCount);
+  const noteInput = collection.getByRole("textbox", { name: "阅读备注" });
+  const waitForNote = (note) => collection.waitForFunction(async ({ id, note }) => {
+    const { readingItems } = await chrome.storage.local.get("readingItems");
+    return readingItems.find((item) => item.id === id)?.note === note;
+  }, { id: full.item.id, note });
+  assert.equal(await noteInput.inputValue(), "");
+  await noteInput.fill("界面设计参考");
+  await waitForNote("界面设计参考");
+  await collection.locator(".item-note").getByText("界面设计参考", { exact: true }).waitFor();
   await collection.screenshot({ path: "/tmp/linkpouch-content.png", fullPage: true });
+  await noteInput.fill("前端 UI");
+  await noteInput.pressSequentially(" 2026");
+  await collection.keyboard.press("Escape");
+  await collection.locator(".item-detail").waitFor();
+  assert.equal(await collection.locator(".item-detail").evaluate((detail) => detail === document.activeElement), true);
   await collection.keyboard.press("Escape");
   await collection.locator(".item-detail").waitFor({ state: "detached" });
+  assert.equal(await collection.locator(".card-preview").evaluate((card) => card.matches(":focus-visible")), false, "mouse-opened preview must not leave a blue focus outline after Escape");
   assert.equal(await collection.getByPlaceholder("按 / 搜索正文、标题或备注").inputValue(), "星际花园");
+  await waitForNote("前端 UI 2026");
+  await collection.locator(".card-preview").click();
+  assert.equal(await noteInput.inputValue(), "前端 UI 2026");
+  await collection.reload();
+  await collection.getByPlaceholder("按 / 搜索正文、标题或备注").fill("星际花园");
+  await collection.locator(".card-preview").click();
+  assert.equal(await noteInput.inputValue(), "前端 UI 2026");
+  await noteInput.fill("");
+  await waitForNote("");
+  await collection.reload();
+  await collection.getByPlaceholder("按 / 搜索正文、标题或备注").fill("星际花园");
+  await collection.locator(".card-preview").click();
+  assert.equal(await noteInput.inputValue(), "");
+  const afterNote = await collection.evaluate(async (id) => {
+    const { readingItems } = await chrome.storage.local.get("readingItems");
+    return readingItems.find((item) => item.id === id);
+  }, full.item.id);
+  assert.deepEqual(afterNote, full.item);
+  await collection.keyboard.press("Escape");
+  assert.equal(await collection.getByPlaceholder("按 / 搜索正文、标题或备注").inputValue(), "星际花园");
+  console.log("PASS: add/edit/clear notes autosave; rapid typing survives Escape and reload without changing item metadata");
   console.log("PASS: body search and inline preview; cards, tabs, and query stay in place");
+
+  await collection.locator(".card-preview").click();
+  await collection.getByRole("button", { name: "编辑标题" }).click();
+  const titleInput = collection.getByRole("textbox", { name: "收藏标题" });
+  await titleInput.fill("我的简短标题");
+  await collection.screenshot({ path: "/tmp/linkpouch-title-editing.png" });
+  await collection.getByRole("textbox", { name: "阅读备注" }).click();
+  await collection.getByRole("heading", { name: "搜索结果", exact: true }).click();
+  await collection.locator(".item-detail").waitFor({ state: "detached" });
+  await collection.waitForFunction(async (id) => {
+    const { readingItems } = await chrome.storage.local.get("readingItems");
+    return readingItems.find((item) => item.id === id)?.title === "我的简短标题";
+  }, full.item.id);
+  await collection.reload();
+  await collection.getByPlaceholder("按 / 搜索正文、标题或备注").fill("星际花园");
+  await collection.locator(".card-preview").click();
+  await collection.locator(".item-detail").getByRole("heading", { name: "我的简短标题", exact: true }).waitFor();
+  await collection.screenshot({ path: "/tmp/linkpouch-title-edited.png" });
+  await collection.keyboard.press("Escape");
+  await collection.locator(".card-preview").focus();
+  await collection.keyboard.press("Enter");
+  await collection.locator(".item-detail").waitFor();
+  await collection.keyboard.press("Escape");
+  assert.equal(await collection.locator(".card-preview").evaluate((card) => card === document.activeElement && card.matches(":focus-visible")), true);
+  console.log("PASS: title edit persists; outside click dismisses preview; keyboard-opened preview restores focus");
+
+  const search = collection.getByPlaceholder("按 / 搜索正文、标题或备注");
+  await search.focus();
+  await collection.keyboard.press("Escape");
+  assert.equal(await search.inputValue(), "");
+  assert.equal(await search.evaluate((input) => input === document.activeElement), true);
+  await collection.keyboard.press("Escape");
+  assert.equal(await search.evaluate((input) => input === document.activeElement), false);
+  await collection.keyboard.press("/");
+  assert.equal(await search.evaluate((input) => input === document.activeElement), true);
+  await search.fill("保存");
+  const resultIds = await collection.locator(".card-preview").evaluateAll((cards) => cards.map((card) => card.id));
+  assert.equal(resultIds.length, 3);
+  await search.press("ArrowDown");
+  await search.press("ArrowDown");
+  assert.equal(await search.getAttribute("aria-activedescendant"), resultIds[1]);
+  await collection.screenshot({ path: "/tmp/linkpouch-search-selected.png" });
+  await search.press("Enter");
+  const detail = collection.locator(".item-detail");
+  await detail.waitFor();
+  assert.equal(await detail.evaluate((panel) => panel === document.activeElement), true);
+  assert.equal(await collection.locator(".queue-item.selected .card-preview").getAttribute("id"), resultIds[1]);
+  await collection.keyboard.press("ArrowRight");
+  assert.equal(await collection.locator(".queue-item.selected .card-preview").getAttribute("id"), resultIds[2]);
+  const wallScroll = await collection.evaluate(() => scrollY);
+  await collection.keyboard.press("PageDown");
+  await collection.waitForFunction(() => document.querySelector(".item-detail").scrollTop > 0);
+  assert.equal(await collection.evaluate(() => scrollY), wallScroll);
+  await collection.keyboard.press("ArrowLeft");
+  assert.equal(await collection.locator(".queue-item.selected .card-preview").getAttribute("id"), resultIds[1]);
+  await collection.keyboard.press("/");
+  await detail.waitFor({ state: "detached" });
+  assert.deepEqual(await search.evaluate((input) => [input === document.activeElement, input.selectionStart, input.selectionEnd]), [true, 0, 2]);
+  await search.press("Backspace");
+  assert.equal(await search.inputValue(), "");
+  await search.fill("星际花园");
+  await search.press("Enter");
+  await noteInput.fill("普通数字 / 123");
+  await noteInput.press("ArrowLeft");
+  await noteInput.press("/");
+  assert.equal(await detail.count(), 1);
+  assert.equal(await noteInput.inputValue(), "普通数字 / 12/3");
+  await noteInput.fill("");
+  await waitForNote("");
+  await noteInput.press("Escape");
+  assert.equal(await detail.count(), 1);
+  await collection.keyboard.press("Escape");
+  await detail.waitFor({ state: "detached" });
+  assert.equal(await search.inputValue(), "星际花园");
+  assert.equal(await search.evaluate((input) => input === document.activeElement), true);
+  assert.equal(await search.getAttribute("aria-activedescendant"), `queue-card-${full.item.id}`);
+  await search.dispatchEvent("compositionstart");
+  await search.press("Escape");
+  assert.equal(await search.inputValue(), "星际花园");
+  await search.dispatchEvent("compositionend");
+  await search.press("Escape");
+  assert.equal(await search.inputValue(), "");
+  await collection.locator(".search-icon").dblclick({ force: true });
+  assert.equal(await collection.evaluate(() => getSelection().toString()), "");
+  await collection.screenshot({ path: "/tmp/linkpouch-search-keyboard.png" });
+  console.log("PASS: search selection -> reading focus -> adjacent preview -> / selects query; Escape clears in layers; text editing and IME keep their keys; icon is not text-selectable");
 
   await collection.evaluate(async ({ itemId, sourceTabId }) => {
     await chrome.storage.session.set({ captureSession: { itemId, sourceTabId, startedAt: Date.now(), outcome: "created" } });
@@ -105,7 +231,25 @@ try {
   await popup.setViewportSize({ width: 560, height: 700 });
   await popup.goto(`${root}/popup.html`);
   await popup.getByText("已保存正文", { exact: false }).waitFor();
+  const popupNote = popup.getByRole("textbox", { name: "阅读备注" });
+  await popupNote.press("1");
+  assert.equal(await popupNote.inputValue(), full.settings.presets[0]);
+  await popupNote.press("2");
+  assert.equal(await popupNote.inputValue(), `${full.settings.presets[0]}2`);
+  await popupNote.fill("");
+  await popupNote.pressSequentially(" 2026");
+  assert.equal(await popupNote.inputValue(), " 2026");
+  await popupNote.fill("");
+  await popupNote.dispatchEvent("compositionstart");
+  await popupNote.press("2");
+  assert.equal(await popupNote.inputValue(), "2");
+  await popupNote.dispatchEvent("compositionend");
+  await popupNote.fill("");
+  await popupNote.press("9");
+  assert.equal(await popupNote.inputValue(), "9");
+  await popupNote.fill("");
   await popup.screenshot({ path: "/tmp/linkpouch-popup.png", fullPage: true });
+  console.log("PASS: bare digits insert presets only into empty notes; leading spaces, existing text, IME, and unconfigured digits keep ordinary input");
   console.log("PASS: popup previews the actual saved body");
   await popup.close();
 
@@ -140,9 +284,11 @@ try {
     window.photoOpened = false;
     document.querySelector('[data-testid="tweetPhoto"]').addEventListener("click", () => { window.photoOpened = true; });
   });
+  await collection.evaluate(() => { window.collectionDocument = "keep-directory-session"; });
   await imageButton.click();
   assert.equal(await source.evaluate(() => window.photoOpened), false);
   await collection.getByRole("heading", { name: "画廊", exact: true }).waitFor();
+  assert.equal(await collection.evaluate(() => window.collectionDocument), "keep-directory-session", "downloading must reuse the collection document instead of reloading it");
   await collection.getByText("已保存 2 张图片", { exact: true }).waitFor();
   assert.equal(await collection.locator(".gallery-tile").count(), 2);
   await collection.locator(".gallery-tile img").first().waitFor();
@@ -168,8 +314,49 @@ try {
   await collection.getByRole("button", { name: "画廊", exact: true }).click();
   await collection.locator(".gallery-tile img").first().waitFor();
   console.log("PASS: X button -> original image files -> gallery -> zoom -> reload; no reply or unread task");
+
+  const previousSave = Math.max(...stored.local.localImages.map((image) => image.createdAt));
+  await collection.evaluate(() => { window.collectionDocument = "second-download"; });
+  await source.locator('[data-testid="tweetPhoto"]').hover();
+  await source.locator("#linkpouch-download").click();
+  await collection.waitForFunction(async (previous) => {
+    const { localImages } = await chrome.storage.local.get("localImages");
+    return localImages.filter((image) => image.createdAt > previous).length === 2;
+  }, previousSave);
+  assert.equal(await collection.evaluate(() => window.collectionDocument), "second-download");
+  assert.equal(await collection.getByRole("button", { name: "授权目录访问" }).count(), 0);
+  console.log("PASS: consecutive downloads reuse the live collection document and directory handle");
+
+  await collection.evaluate(async (item) => {
+    const { readingItems } = await chrome.storage.local.get("readingItems");
+    await chrome.storage.local.set({ readingItems: [...readingItems, {
+      ...item, id: "tall-fixture", title: "长图裁切预览", content: undefined,
+      images: [{ url: "https://pbs.twimg.com/media/tall-fixture", alt: "完整长图" }],
+    }] });
+  }, full.item);
+  await collection.getByRole("button", { name: "全部收藏", exact: false }).click();
+  const tallCard = collection.locator(".queue-item").filter({ hasText: "长图裁切预览" });
+  const tallImage = tallCard.locator(".card-media img");
+  await tallImage.evaluate((img) => img.decode());
+  const crop = await tallImage.evaluate((img) => {
+    const image = img.getBoundingClientRect();
+    const media = img.parentElement.getBoundingClientRect();
+    return { imageWidth: image.width, mediaWidth: media.width, imageHeight: image.height, mediaHeight: media.height, top: image.top - media.top };
+  });
+  assert.equal(crop.imageWidth, crop.mediaWidth);
+  assert.equal(crop.mediaHeight, 380);
+  assert.ok(crop.imageHeight > crop.mediaHeight);
+  assert.equal(crop.top, 0);
+  await tallCard.screenshot({ path: "/tmp/linkpouch-tall-card.png" });
+  await tallCard.locator(".card-preview").click();
+  const detailImage = collection.locator(".detail-image");
+  await detailImage.evaluate((img) => img.decode());
+  const ratio = await detailImage.evaluate((img) => img.clientHeight / img.clientWidth);
+  assert.ok(Math.abs(ratio - 1600 / 240) < 0.01);
+  await collection.screenshot({ path: "/tmp/linkpouch-note-preview.png" });
+  console.log("PASS: tall card image fills width and crops from top; detail retains full image ratio");
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ result: "PASS", profile, screenshots: ["/tmp/linkpouch-content.png", "/tmp/linkpouch-popup.png", "/tmp/linkpouch-gallery.png", "/tmp/linkpouch-image-button.png"] }, null, 2));
+  console.log(JSON.stringify({ result: "PASS", profile, screenshots: ["/tmp/linkpouch-content.png", "/tmp/linkpouch-popup.png", "/tmp/linkpouch-gallery.png", "/tmp/linkpouch-image-button.png", "/tmp/linkpouch-tall-card.png", "/tmp/linkpouch-note-preview.png"] }, null, 2));
 } finally {
   await context.close();
 }

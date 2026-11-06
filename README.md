@@ -44,11 +44,13 @@ Chrome or macOS may reserve a suggested shortcut. Assign another combination fro
 
 ## Behavior
 
-Capture extracts content with Defuddle and persists it before opening Quick Capture. The popup previews what was saved. Enter confirms the note; Shift+Enter adds a line; Escape dismisses note editing without removing the captured item. Press Ctrl+E followed by 1–9 to insert a configured preset.
+Capture extracts content with Defuddle and persists it before opening Quick Capture. The popup previews what was saved. Enter confirms the note; Shift+Enter adds a line; Escape dismisses note editing without removing the captured item. With an empty note, press 1–9 to insert a configured preset. To begin a note with ordinary numbers, type a space first; existing text and IME composition are not intercepted.
 
 Text selections from the same URL are separate items. Full pages still deduplicate by URL. Search includes saved body text. All saved includes both Unread and Done items, excluding Trash.
 
-The collection opens as a masonry wall of images, text, and notes, grouped by Today, This week, and Earlier. Click a card to read its saved content in the right-hand panel without rearranging the wall; Escape closes the panel. **Source page** opens the original using your configured tab behavior. Cards use saved remote image URLs, not downloaded copies. Older items without saved content still show their titles and notes.
+The collection opens as a masonry wall of images, text, and notes, grouped by Today, This week, and Earlier. Tall images fill the card width and are cropped at the bottom; the saved-content panel keeps the full image. Click a card to read its saved content in the right-hand panel without rearranging the wall; Escape or a click outside closes the panel. Click the title to edit it. Title and note changes save automatically. **Source page** opens the original using your configured tab behavior. Cards use saved remote image URLs, not downloaded copies. Older items without saved content still show their titles and notes.
+
+Keyboard browsing: `/` focuses search and selects its text, including from a preview when not editing. In search, Up/Down selects a result and Enter opens it. The preview starts in reading mode: Up/Down and Page Up/Down scroll its content, while Left/Right moves through the current results. Escape leaves title/note editing first, then closes the preview and returns focus to its entry point. In search, Escape clears the query without leaving the field; another Escape leaves an empty search. Text editing and IME composition keep their normal keys.
 
 ## Collect images
 

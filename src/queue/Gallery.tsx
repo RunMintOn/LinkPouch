@@ -42,7 +42,7 @@ export function Gallery({ language, pendingItem, onDownloaded }: {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [selected, setSelected] = useState<{ record: LocalImage; url: string }>();
-  const started = useRef(false);
+  const started = useRef<string | undefined>(undefined);
   const viewer = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -90,8 +90,12 @@ export function Gallery({ language, pendingItem, onDownloaded }: {
   }
 
   useEffect(() => {
-    if (authorized && directory && pendingItem && !started.current) {
-      started.current = true;
+    if (!pendingItem) {
+      started.current = undefined;
+      return;
+    }
+    if (authorized && directory && started.current !== pendingItem.id) {
+      started.current = pendingItem.id;
       void download(pendingItem, directory);
     }
   }, [authorized, directory, pendingItem]);

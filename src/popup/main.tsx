@@ -12,7 +12,6 @@ import "./popup.css";
 function Popup() {
   const textarea = useRef<HTMLTextAreaElement>(null);
   const compositionActive = useRef(false);
-  const chordTimer = useRef<number | undefined>(undefined);
   const [itemId, setItemId] = useState<string>();
   const [item, setItem] = useState<ReadingItem>();
   const [extractionError, setExtractionError] = useState("");
@@ -22,7 +21,6 @@ function Popup() {
   const [note, setNote] = useState("");
   const [settings, setSettings] = useState<Settings>();
   const [outcome, setOutcome] = useState<CaptureOutcome>("created");
-  const [chord, setChord] = useState(false);
   const [error, setError] = useState<string>();
   const language = settings?.language ?? DEFAULT_SETTINGS.language;
 
@@ -49,7 +47,6 @@ function Popup() {
       setOutcome(response.session.outcome ?? "created");
       requestAnimationFrame(() => textarea.current?.focus());
     });
-    return () => window.clearTimeout(chordTimer.current);
   }, []);
 
   function insertPreset(index: number) {
@@ -90,17 +87,10 @@ function Popup() {
   function onKeyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (isImeInput(event.nativeEvent, compositionActive.current)) return;
 
-    if (chord) {
+    if (note === "" && /^[1-9]$/.test(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey
+      && settings?.presets[Number(event.key) - 1]) {
       event.preventDefault();
-      setChord(false);
-      window.clearTimeout(chordTimer.current);
-      if (/^[1-9]$/.test(event.key)) insertPreset(Number(event.key) - 1);
-      return;
-    }
-    if (event.ctrlKey && event.key.toLowerCase() === "e") {
-      event.preventDefault();
-      setChord(true);
-      chordTimer.current = window.setTimeout(() => setChord(false), 2000);
+      insertPreset(Number(event.key) - 1);
       return;
     }
     if (event.key === "Escape") {
@@ -150,7 +140,7 @@ function Popup() {
         <div className="preset-buttons">{settings.presets.map((preset, index) => preset && <button key={index} onClick={() => insertPreset(index)} title={preset}><kbd>{index + 1}</kbd><span>{preset}</span></button>)}</div>
       </section>}
       <footer>
-        <span className={chord ? "chord active" : "chord"}>{chord ? t(language, "popup.choosePreset") : <><kbd>Esc</kbd> {t(language, "popup.cancel")}</>}</span>
+        <span><kbd>Esc</kbd> {t(language, "popup.cancel")}</span>
         <span><kbd>⇧↵</kbd> {t(language, "popup.newline")}　 <kbd>↵</kbd> {t(language, "popup.save")}</span>
       </footer>
     </main>

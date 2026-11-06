@@ -16,13 +16,19 @@ import {
 import { createBackup, parseBackup, type RestoredBackup } from "../backup";
 import { t, viewLabel } from "../i18n";
 import { sendMessage } from "../chrome";
-import { getItems, getSettings, removeItem, restoreBackup, setItems as persistItems, setSettings as persistSettings } from "../repository";
+import { getItems, getSettings, removeItem, restoreBackup, setItems as persistItems, setSettings as persistSettings, updateItem } from "../repository";
 import { applyTheme } from "../theme";
+import { isImeInput } from "../popup/ime";
 import { SavedContent } from "../SavedContent";
 import { Gallery } from "./Gallery";
 import "./queue.css";
 
 const VIEWS: QueueView[] = ["all", "unread", "today", "week", "source", "done", "trash"];
+
+function isEditingTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement
+    || target instanceof HTMLSelectElement || (target instanceof HTMLElement && target.isContentEditable);
+}
 
 function NavIcon({ view }: { view: QueueView | "settings" }) {
   const paths: Record<QueueView | "settings", React.ReactNode> = {
@@ -76,7 +82,7 @@ function CardImage({ image, count }: { image: NonNullable<ReadingItem["images"]>
   </div>;
 }
 
-function QueueItem({ item, language, selected, onChange, onPreview }: { item: ReadingItem; language: Settings["language"]; selected: boolean; onChange: (next: ReadingItem | null) => void; onPreview: (item: ReadingItem) => void }) {
+function QueueItem({ item, language, selected, searchActive, onChange, onPreview }: { item: ReadingItem; language: Settings["language"]; selected: boolean; searchActive: boolean; onChange: (next: ReadingItem | null) => void; onPreview: (item: ReadingItem) => void }) {
   const state = stateOf(item);
   const cardRef = useRef<HTMLElement>(null);
 
@@ -98,8 +104,8 @@ function QueueItem({ item, language, selected, onChange, onPreview }: { item: Re
   }
 
   return (
-    <article ref={cardRef} className={`queue-item${selected ? " selected" : ""}`}>
-      <button className="card-preview" onClick={() => onPreview(item)} aria-label={`${t(language, "content.view")}: ${itemTitle(item) || itemSource(item)}`} aria-pressed={selected}>
+    <article ref={cardRef} className={`queue-item${selected ? " selected" : ""}${searchActive ? " search-active" : ""}`}>
+      <button id={`queue-card-${item.id}`} className="card-preview" onClick={() => onPreview(item)} aria-label={`${t(language, "content.view")}: ${itemTitle(item) || itemSource(item)}`} aria-pressed={selected}>
         {item.images?.[0] && <CardImage key={item.images[0].url} image={item.images[0]} count={item.images.length} />}
         <div className="card-body">
           <div className="card-source">
@@ -134,26 +140,74 @@ function QueueItem({ item, language, selected, onChange, onPreview }: { item: Re
   );
 }
 
-function ItemDetail({ item, language, onBack }: { item: ReadingItem; language: Settings["language"]; onBack: () => void }) {
-  const closeButton = useRef<HTMLButtonElement>(null);
+function ItemDetail({ item, language, onBack, onSave }: { item: ReadingItem; language: Settings["language"]; onBack: () => void; onSave: (id: string, fields: Partial<Pick<ReadingItem, "title" | "note">>) => Promise<void> }) {
+  const detailRef = useRef<HTMLElement>(null);
+  const composing = useRef(false);
+  const [title, setTitle] = useState(item.title);
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [note, setNote] = useState(item.note);
+  const [saveStatus, setSaveStatus] = useState<"saving" | "saved" | "error">();
+  const saveVersion = useRef(0);
+
+  function save(fields: Partial<Pick<ReadingItem, "title" | "note">>) {
+    setSaveStatus("saving");
+    const version = ++saveVersion.current;
+    void onSave(item.id, fields).then(
+      () => { if (version === saveVersion.current) setSaveStatus("saved"); },
+      () => { if (version === saveVersion.current) setSaveStatus("error"); },
+    );
+  }
+
   useEffect(() => {
-    const previousFocus = document.activeElement as HTMLElement;
-    closeButton.current?.focus({ preventScroll: true });
-    return () => previousFocus.focus({ preventScroll: true });
+    detailRef.current!.focus({ preventScroll: true });
   }, []);
 
-  return <section className="item-detail" aria-label={t(language, "content.view")}>
+  useEffect(() => {
+    const dismiss = (event: PointerEvent) => {
+      if (!detailRef.current!.contains(event.target as Node)) onBack();
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [onBack]);
+
+  return <section ref={detailRef} className="item-detail" tabIndex={-1} aria-label={t(language, "content.view")}
+    onCompositionStartCapture={() => { composing.current = true; }} onCompositionEndCapture={() => { composing.current = false; }}
+    onKeyDown={(event) => {
+      if (event.key === "Escape" && isEditingTarget(event.target) && !isImeInput(event.nativeEvent, composing.current)) {
+        event.preventDefault();
+        event.stopPropagation();
+        setEditingTitle(false);
+        detailRef.current!.focus({ preventScroll: true });
+      }
+    }}>
     <div className="detail-toolbar">
       <a href={item.url} target="_blank" rel="noreferrer" onClick={(event) => {
         event.preventDefault();
         void sendMessage({ type: "OPEN_ITEM", url: item.url });
       }}>{t(language, "content.source")} ↗</a>
       {item.images?.some((image) => new URL(image.url).hostname === "pbs.twimg.com") && <button className="secondary" onClick={() => void sendMessage({ type: "OPEN_QUEUE", itemId: item.id, download: true })}>{t(language, "gallery.download")} · {item.images.length}</button>}
-      <button ref={closeButton} className="detail-close" onClick={onBack} aria-label={t(language, "content.close")}>×</button>
+      <button className="detail-close" onClick={onBack} aria-label={t(language, "content.close")}>×</button>
     </div>
-    <h2>{itemTitle(item) || itemSource(item)}</h2>
+    {editingTitle ? <textarea className="detail-title-input" autoFocus rows={3} value={title} aria-label={t(language, "content.title")} onChange={(event) => {
+      setTitle(event.target.value);
+      save({ title: event.target.value });
+    }} onBlur={() => setEditingTitle(false)} onKeyDown={(event) => {
+      if (event.key === "Enter" && !event.shiftKey && !isImeInput(event.nativeEvent, composing.current)) {
+        event.preventDefault();
+        setEditingTitle(false);
+        detailRef.current!.focus({ preventScroll: true });
+      }
+    }} /> : <h2 aria-label={itemTitle(item) || itemSource(item)}><button className="detail-title-button" aria-label={t(language, "content.editTitle")} onClick={() => setEditingTitle(true)}>
+      {itemTitle(item) || itemSource(item)} <span aria-hidden="true">✎</span>
+    </button></h2>}
     <p className="detail-meta">{itemSource(item)} · {new Date(item.queuedAt).toLocaleDateString(language)}{item.content && ` · ${t(language, item.content.kind === "selection" ? "content.selection" : "content.page")}`}</p>
-    {item.note && <p className="detail-note">{item.note}</p>}
+    <div className="detail-note-editor">
+      <textarea className="detail-note" value={note} onChange={(event) => {
+        setNote(event.target.value);
+        save({ note: event.target.value });
+      }} rows={3} aria-label={t(language, "popup.noteLabel")} placeholder={t(language, "popup.notePlaceholder")} />
+      <p className={`detail-note-status${saveStatus === "error" ? " error" : ""}`} role="status">{saveStatus && t(language, `content.note.${saveStatus}`)}</p>
+    </div>
     {item.content ? <SavedContent content={item.content} /> : <>
       <p className="detail-missing">{t(language, "content.notSaved")}</p>
       {item.images?.map((image) => <img className="detail-image" key={image.url} src={image.url} alt={image.alt} loading="lazy" referrerPolicy="no-referrer" />)}
@@ -253,16 +307,22 @@ function SettingsPanel({
 }
 
 function App() {
+  const route = new URLSearchParams(location.hash.slice(1));
   const [items, setItems] = useState<ReadingItem[]>([]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [view, setView] = useState<QueueView>("all");
   const [query, setQuery] = useState("");
+  const [activeResultId, setActiveResultId] = useState<string | null>(null);
+  const [searchFocused, setSearchFocused] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showGallery, setShowGallery] = useState(location.hash === "#gallery");
-  const [selectedId, setSelectedId] = useState<string | null>(new URLSearchParams(location.search).get("item"));
-  const [downloadId, setDownloadId] = useState<string | null>(new URLSearchParams(location.search).get("download"));
+  const [showGallery, setShowGallery] = useState(route.has("gallery"));
+  const [selectedId, setSelectedId] = useState<string | null>(route.get("item"));
+  const [downloadId, setDownloadId] = useState<string | null>(route.get("download"));
   const [loading, setLoading] = useState(true);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const previewOrigin = useRef<HTMLElement | null>(null);
+  const composing = useRef(false);
+  const itemSaveQueue = useRef<Promise<void>>(Promise.resolve());
 
   async function reload() {
     const [nextItems, nextSettings] = await Promise.all([getItems(), getSettings()]);
@@ -273,37 +333,25 @@ function App() {
   useEffect(() => {
     void reload();
     history.replaceState(null, "", location.pathname);
+    const navigate = () => {
+      const next = new URLSearchParams(location.hash.slice(1));
+      setShowSettings(false);
+      previewOrigin.current = null;
+      setShowGallery(next.has("gallery"));
+      setSelectedId(next.get("item"));
+      setDownloadId(next.get("download"));
+      history.replaceState(null, "", location.pathname);
+    };
     const listener = () => void reload();
     chrome.storage.onChanged.addListener(listener);
-    return () => chrome.storage.onChanged.removeListener(listener);
+    window.addEventListener("hashchange", navigate);
+    return () => {
+      chrome.storage.onChanged.removeListener(listener);
+      window.removeEventListener("hashchange", navigate);
+    };
   }, []);
 
   useEffect(() => applyTheme(settings.theme), [settings.theme]);
-
-  useEffect(() => {
-    if (!selectedId) return;
-    const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelectedId(null);
-    };
-    document.addEventListener("keydown", close);
-    return () => document.removeEventListener("keydown", close);
-  }, [selectedId]);
-
-  useEffect(() => {
-    function focusSearch(event: KeyboardEvent) {
-      const target = event.target;
-      const isEditing = target instanceof HTMLInputElement
-        || target instanceof HTMLTextAreaElement
-        || target instanceof HTMLSelectElement
-        || (target instanceof HTMLElement && target.isContentEditable);
-      if (showSettings || showGallery || selectedId || event.key !== "/" || event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isEditing) return;
-      event.preventDefault();
-      searchInputRef.current?.focus();
-    }
-
-    document.addEventListener("keydown", focusSearch);
-    return () => document.removeEventListener("keydown", focusSearch);
-  }, [showSettings, showGallery, selectedId]);
 
   const visible = useMemo(() => {
     if (query.trim()) return searchItems(items, query, settings.sortOrder);
@@ -335,9 +383,86 @@ function App() {
     }, new Map<string, ReadingItem[]>());
   }, [visible, view, query, settings.language]);
 
+  function openPreview(item: ReadingItem) {
+    const origin = document.activeElement as HTMLElement;
+    previewOrigin.current = origin === searchInputRef.current || origin.matches(":focus-visible") ? origin : null;
+    setActiveResultId(item.id);
+    setSelectedId(item.id);
+  }
+
+  function closePreview() {
+    setSelectedId(null);
+    previewOrigin.current?.focus();
+    previewOrigin.current = null;
+  }
+
+  function changeQuery(value: string) {
+    setQuery(value);
+    setActiveResultId(null);
+  }
+
+  function searchKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (isImeInput(event.nativeEvent, composing.current) || event.metaKey || event.ctrlKey || event.altKey) return;
+    const ordered = [...grouped.values()].flat();
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (query) changeQuery("");
+      else event.currentTarget.blur();
+    } else if ((event.key === "ArrowDown" || event.key === "ArrowUp") && !event.shiftKey && ordered.length) {
+      event.preventDefault();
+      const index = ordered.findIndex((item) => item.id === activeResultId);
+      const next = ordered[Math.max(0, Math.min(ordered.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)))];
+      setActiveResultId(next.id);
+      document.getElementById(`queue-card-${next.id}`)!.scrollIntoView({ block: "nearest" });
+    } else if (event.key === "Enter" && ordered.length) {
+      event.preventDefault();
+      openPreview(ordered.find((item) => item.id === activeResultId) ?? ordered[0]);
+    }
+  }
+
+  useEffect(() => {
+    function navigate(event: KeyboardEvent) {
+      if (showSettings || showGallery || event.defaultPrevented || isImeInput(event, composing.current)
+        || event.metaKey || event.ctrlKey || event.altKey || isEditingTarget(event.target)) return;
+      if (event.key === "/") {
+        event.preventDefault();
+        setSelectedId(null);
+        previewOrigin.current = null;
+        searchInputRef.current!.focus();
+        searchInputRef.current!.select();
+      } else if (event.key === "Escape" && selectedId) {
+        event.preventDefault();
+        closePreview();
+      } else if (selectedId && !event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+        event.preventDefault();
+        const ordered = [...grouped.values()].flat();
+        const index = ordered.findIndex((item) => item.id === selectedId);
+        const next = index >= 0 ? ordered[index + (event.key === "ArrowRight" ? 1 : -1)] : undefined;
+        if (next) {
+          setSelectedId(next.id);
+          setActiveResultId(next.id);
+        }
+      }
+    }
+    document.addEventListener("keydown", navigate);
+    return () => document.removeEventListener("keydown", navigate);
+  }, [showSettings, showGallery, selectedId, grouped]);
+
   function applyChange(next: ReadingItem | null) {
     if (!next) return void reload();
     setItems((current) => current.map((item) => item.id === next.id ? next : item));
+  }
+
+  function saveItem(id: string, fields: Partial<Pick<ReadingItem, "title" | "note">>): Promise<void> {
+    // Keep writes ordered, including when the preview closes or switches items.
+    const save = itemSaveQueue.current.then(async () => {
+      const next = await updateItem(id, (item) => ({ ...item, ...fields }));
+      if (!next) throw new Error("Reading item not found");
+      applyChange(next);
+    });
+    itemSaveQueue.current = save.catch(() => {});
+    return save;
   }
 
   const unreadCount = items.filter((item) => stateOf(item) === "unread").length;
@@ -345,12 +470,12 @@ function App() {
   const selectedItem = items.find((item) => item.id === selectedId);
 
   return (
-    <div className="shell">
+    <div className="shell" onCompositionStartCapture={() => { composing.current = true; }} onCompositionEndCapture={() => { composing.current = false; }}>
       <aside className="sidebar">
         <div className="brand"><img className="logo" src="/icon.png" alt="" /><div><strong>LinkPouch</strong><span>{t(settings.language, "queue.unreadCount", { count: unreadCount })}</span></div></div>
         <nav>{VIEWS.map((id) => {
           const count = itemsForView(items, id, settings.sortOrder).length;
-          return <button key={id} className={!showSettings && !showGallery && view === id ? "active" : ""} onClick={() => { setView(id); setShowSettings(false); setShowGallery(false); setSelectedId(null); setQuery(""); }}><NavIcon view={id} /><span>{viewLabel(settings.language, id)}</span>{count > 0 && <em>{count}</em>}</button>;
+          return <button key={id} className={!showSettings && !showGallery && view === id ? "active" : ""} onClick={() => { setView(id); setShowSettings(false); setShowGallery(false); setSelectedId(null); changeQuery(""); }}><NavIcon view={id} /><span>{viewLabel(settings.language, id)}</span>{count > 0 && <em>{count}</em>}</button>;
         })}<button className={showGallery ? "active" : ""} onClick={() => { setShowGallery(true); setShowSettings(false); setSelectedId(null); }}><svg className="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="2" /><circle cx="7" cy="7" r="1" /><path d="m3 14 5-5 4 4 2-2 3 3" /></svg><span>{t(settings.language, "gallery.title")}</span></button></nav>
         <button className={showSettings ? "settings-link active" : "settings-link"} onClick={() => { setShowSettings(true); setShowGallery(false); setSelectedId(null); }}><NavIcon view="settings" /><span>{t(settings.language, "settings.title")}</span></button>
       </aside>
@@ -366,18 +491,24 @@ function App() {
           <header className="toolbar">
             <div><h1>{currentLabel}</h1></div>
             <div className="toolbar-actions">
-              <label className="search"><span>⌕</span><input ref={searchInputRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t(settings.language, "queue.searchPlaceholder")} /></label>
+              <label className="search">
+                <svg className="search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="5.5" /><path d="m13 13 4 4" /></svg>
+                <input ref={searchInputRef} value={query} onChange={(e) => changeQuery(e.target.value)} onKeyDown={searchKeyDown}
+                  onFocus={() => setSearchFocused(true)} onBlur={() => setSearchFocused(false)}
+                  aria-controls="collection-results" aria-activedescendant={searchFocused && activeResultId ? `queue-card-${activeResultId}` : undefined}
+                  placeholder={t(settings.language, "queue.searchPlaceholder")} />
+              </label>
               <button className="sort-button" type="button" aria-label={t(settings.language, "queue.sortTitle")} title={t(settings.language, "queue.sortTitle")} onClick={() => {
                 const next = { ...settings, sortOrder: settings.sortOrder === "newest" ? "oldest" as const : "newest" as const };
                 setSettings(next); void persistSettings(next);
               }}><span>{settings.sortOrder === "newest" ? t(settings.language, "queue.sortNewest") : t(settings.language, "queue.sortOldest")}</span><strong aria-hidden="true">{settings.sortOrder === "newest" ? "↓" : "↑"}</strong></button>
             </div>
           </header>
-          <section className="list grouped-list" aria-busy={loading}>
+          <section id="collection-results" className="list grouped-list" aria-busy={loading}>
             {[...grouped.entries()].map(([label, groupItems]) => <section className="queue-group" key={label}>
               {label && <h2>{label}{view === "source" && <span>{groupItems.length}</span>}</h2>}
               <div className="card-grid">
-                {groupItems.map((item) => <QueueItem key={item.id} item={item} language={settings.language} selected={item.id === selectedId} onChange={applyChange} onPreview={(value) => setSelectedId(value.id)} />)}
+                {groupItems.map((item) => <QueueItem key={item.id} item={item} language={settings.language} selected={item.id === selectedId} searchActive={searchFocused && item.id === activeResultId} onChange={applyChange} onPreview={openPreview} />)}
               </div>
             </section>)}
             {!loading && visible.length === 0 && <div className="empty"><div>✓</div><h2>{query ? t(settings.language, "queue.noResults") : view === "unread" ? t(settings.language, "queue.emptyUnread") : t(settings.language, "queue.emptyOther")}</h2><p>{query ? t(settings.language, "queue.tryAnotherQuery") : t(settings.language, "queue.emptyHelp")}</p></div>}
@@ -385,7 +516,7 @@ function App() {
           </section>
         </>}
       </main>
-      {!showSettings && !showGallery && selectedItem && <ItemDetail key={selectedItem.id} item={selectedItem} language={settings.language} onBack={() => setSelectedId(null)} />}
+      {!showSettings && !showGallery && selectedItem && <ItemDetail key={selectedItem.id} item={selectedItem} language={settings.language} onBack={closePreview} onSave={saveItem} />}
     </div>
   );
 }

@@ -72,7 +72,7 @@ async function openCapturePopup(session: CaptureSession): Promise<void> {
 
 async function openQueue(itemId?: string, download = false): Promise<void> {
   const queueUrl = chrome.runtime.getURL("queue.html");
-  const targetUrl = itemId ? `${queueUrl}?${download ? "download" : "item"}=${encodeURIComponent(itemId)}${download ? "#gallery" : ""}` : queueUrl;
+  const targetUrl = itemId ? `${queueUrl}#${download ? "gallery&download" : "item"}=${encodeURIComponent(itemId)}` : queueUrl;
   const settings = await getSettings();
   const [currentTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   const currentWindowId = currentTab?.windowId;

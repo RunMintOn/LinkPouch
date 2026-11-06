@@ -81,7 +81,6 @@ textarea::placeholder { color: var(--popup-faint); }
 .preset-buttons button span { overflow: hidden; font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 footer { display: flex; justify-content: space-between; align-items: center; min-height: 54px; margin: 18px -22px 0; padding: 0 22px; border-top: .5px solid var(--border); color: var(--popup-muted); font-size: 12px; }
 kbd { display: inline-flex; align-items: center; justify-content: center; min-height: 25px; padding: 2px 8px; border: .5px solid var(--key-border); border-radius: 6px; color: var(--popup-muted); background: color-mix(in srgb, var(--popup-surface) 70%, transparent); box-shadow: 0 1px 0 color-mix(in srgb, var(--popup-text) 12%, transparent); font-family: inherit; font-size: 12px; }
-.chord.active { color: var(--warm); font-weight: 600; }
 .capture-preview { margin-bottom: 16px; padding: 14px; border: .5px solid var(--border); border-radius: 10px; background: var(--popup-surface); }
 .capture-status { margin: 0 0 10px; color: var(--popup-secondary); font-size: 13px; font-weight: 600; }
 .capture-preview summary { color: var(--popup-muted); font-size: 12px; cursor: pointer; }
